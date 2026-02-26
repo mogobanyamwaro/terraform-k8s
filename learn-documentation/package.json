@@ -1,0 +1,22 @@
+{
+  "name": "attendance-service",
+  "version": "0.1.0",
+  "description": "Attendance module API — event recording and querying",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "attendance",
+    "api"
+  ],
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

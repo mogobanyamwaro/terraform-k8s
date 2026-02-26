@@ -1,0 +1,33 @@
+# ClusterRole + ClusterRoleBinding
+# ClusterRole = cluster-wide or reusable across namespaces
+#
+# Apply: kubectl apply -f .
+
+#ClusterRole defines what actions are allowed on what resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: secrets-reader
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+#A ClusterRoleBinding connects who (ServiceAccount) can do what (ClusterRole) EVERYWHERE in the cluster.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: read-secrets-global
+subjects:
+  - kind: ServiceAccount
+    name: dev-sa #who
+    namespace: rbac-demo
+roleRef:
+  kind: ClusterRole
+  name: secrets-reader #What they can do
+  apiGroup: rbac.authorization.k8s.io
+
+  # Role  vs ClusterRole
+  # Single namespace vs cluster-wide
+  # Resource in one namespace vs Resource in all namespaces

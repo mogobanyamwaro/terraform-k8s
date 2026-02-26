@@ -1,0 +1,40 @@
+# Credentials (never push)
+*.cred
+aws.cred
+.env
+.env.*
+*.pem
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python (Lambda, GCP functions)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Logs
+*.log
+crash.log
+
+# Terraform override (often contains local overrides)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

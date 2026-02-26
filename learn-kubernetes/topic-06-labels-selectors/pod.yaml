@@ -1,0 +1,17 @@
+# Topic 6: Labels & Selectors
+# Labels: key-value metadata. Selectors: filter by labels.
+#
+# Apply: kubectl apply -f .
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: frontend-pod
+  labels:
+    app: frontend
+    tier: web
+    env: prod
+spec:
+  containers:
+    - name: nginx
+      image: nginx:alpine

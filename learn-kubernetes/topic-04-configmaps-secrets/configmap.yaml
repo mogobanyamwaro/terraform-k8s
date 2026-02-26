@@ -1,0 +1,12 @@
+# Topic 4: ConfigMaps & Secrets
+# ConfigMap: non-sensitive config. Secret: sensitive data (base64).
+#
+# Apply: kubectl apply -f .
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  LOG_LEVEL: "info"
+  ENV: "dev"

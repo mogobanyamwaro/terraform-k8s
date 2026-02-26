@@ -1,0 +1,15 @@
+# Topic 15: kubeadm config example (reference only)
+# Use: kubeadm init --config kubeadm-config-example.yaml
+#
+# Exam: You may need to generate/edit kubeadm config for specific scenarios.
+
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+kubernetesVersion: "1.28.0"
+networking:
+  podSubnet: "10.244.0.0/16"
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+nodeRegistration:
+  taints: [] # Allow scheduling on control plane for single-node

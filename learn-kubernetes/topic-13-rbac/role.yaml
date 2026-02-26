@@ -1,0 +1,42 @@
+# Topic 13: RBAC
+# Role = namespace-scoped permissions
+#
+# Apply: kubectl apply -f .
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rbac-demo
+---
+#service account is the user account for applications
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dev-sa
+  namespace: rbac-demo
+---
+#Difines what actions are allowed on what resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: rbac-demo
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+# Connects who(service account) can do what(role)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-pods
+  namespace: rbac-demo
+subjects:
+  - kind: ServiceAccount
+    name: dev-sa
+    namespace: rbac-demo
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io

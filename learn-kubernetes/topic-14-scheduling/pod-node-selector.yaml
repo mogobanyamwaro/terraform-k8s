@@ -1,0 +1,16 @@
+# Topic 14: Scheduling - nodeSelector
+# Pod schedules only on nodes with matching labels
+#
+# First: kubectl label nodes <node-name> disk=ssd
+# Apply: kubectl apply -f pod-node-selector.yaml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: node-selector-pod
+spec:
+  containers:
+    - name: nginx
+      image: nginx:alpine
+  nodeSelector:
+    disk: ssd

@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars and set your values.
+# Do not commit terraform.tfvars if it contains sensitive data.
+
+aws_region   = "us-east-1"
+bucket_name_prefix = "myapp-uploads"  # bucket becomes myapp-uploads-<account-id>
+project_name = "uploads"

@@ -1,0 +1,19 @@
+# Topic 14: Scheduling - Tolerations
+# Pod must have matching toleration to schedule on tainted node
+#
+# First: kubectl taint nodes <node> key=value:NoSchedule
+# Apply: kubectl apply -f pod-tolerations.yaml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: toleration-pod
+spec:
+  containers:
+    - name: nginx
+      image: nginx:alpine
+  tolerations:
+    - key: "key"
+      operator: "Equal"
+      value: "value"
+      effect: "NoSchedule"

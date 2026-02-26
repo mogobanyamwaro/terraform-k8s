@@ -1,0 +1,14 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: mongo-typescript-server-db
+    restart: unless-stopped
+    ports:
+      - "27018:27017"
+    environment:
+      MONGO_INITDB_DATABASE: app_db
+    volumes:
+      - mongodb_data:/data/db
+
+volumes:
+  mongodb_data:
