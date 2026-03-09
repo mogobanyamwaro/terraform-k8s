@@ -1,0 +1,9 @@
+{
+  "requestContext": {
+    "http": {
+      "method": "GET"
+    }
+  },
+  "rawPath": "/default/results",
+  "path": "/default/results"
+}

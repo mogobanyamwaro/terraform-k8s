@@ -1,0 +1,10 @@
+{
+  "requestContext": {
+    "http": {
+      "method": "POST"
+    }
+  },
+  "rawPath": "/default/add",
+  "path": "/default/add",
+  "body": "{\"num1\": 10, \"num2\": 5}"
+}

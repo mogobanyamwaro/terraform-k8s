@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars and set your values.
+
+aws_region   = "us-east-1"
+project_name = "email-marketing"
+
+# SES: use an email you will verify in the AWS SES console (required).
+ses_from_email = "noreply@yourdomain.com"
+ses_reply_to   = ""  # optional
+
+# S3
+s3_bucket_prefix = "email-marketing"
+
+# EventBridge: only objects under this prefix trigger the Lambda (e.g. lists/).
+eventbridge_s3_prefix = "lists/"
