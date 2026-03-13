@@ -7,7 +7,112 @@
 - **etcd** – backup and restore
 - **Worker node** – kubelet, kube-proxy, container runtime
 - **Cluster DNS** – CoreDNS, service discovery
-  Here is a diagrammatic representation of a standard Kubernetes cluster architecture, showing where **kubelet**, **kubectl**, and **kubeadm** fit into the picture.
+
+## **Control Plane Components**
+
+### **kube-apiserver**
+
+- **Primary management interface** for the entire cluster
+- **Gatekeeper** that validates and configures data for API objects
+- Handles **RESTful API calls** from users, CLI tools, and other components
+- **Authenticates and authorizes** all requests
+- Only component that **communicates directly with etcd**
+
+### **etcd**
+
+- **Distributed key-value store** that holds the cluster's state and configuration
+- **Single source of truth** for cluster data
+- Stores all manifests, configurations, and current state
+- Uses **RAFT consensus algorithm** for consistency
+- Critical for cluster recovery and disaster scenarios
+
+### **kube-scheduler**
+
+- **Assigns newly created pods** to appropriate nodes
+- Evaluates pod requirements (CPU, memory, affinity rules)
+- Considers **node health, capacity, and constraints**
+- Makes scheduling decisions based on:
+  - Resource requirements
+  - Hardware/software constraints
+  - Data locality
+  - Deadline requirements
+
+### **kube-controller-manager**
+
+- Runs **controller processes** that regulate cluster state
+- Watches for changes and **reconciles desired vs actual state**
+- Includes multiple controllers:
+  - Node Controller (node health monitoring)
+  - Replication Controller (maintains pod count)
+  - Endpoint Controller (connects services to pods)
+  - Service Account Controller (manages service accounts)
+
+## **kubeadm Tools**
+
+### **kubeadm init**
+
+- **Bootstraps a new cluster** from scratch
+- Sets up control plane components
+- Generates certificates and configuration
+- Creates the initial cluster state
+
+### **kubeadm join**
+
+- **Adds worker nodes** to an existing cluster
+- Establishes secure communication with control plane
+- Configures the node for cluster membership
+
+### **kubeadm upgrade**
+
+- **Manages cluster version upgrades**
+- Updates control plane components safely
+- Maintains cluster availability during upgrades
+- Handles version compatibility
+
+## **Worker Node Components**
+
+### **kubelet**
+
+- **Primary node agent** running on every node
+- **Registers nodes** with the cluster
+- **Monitors pods** assigned to its node
+- Reports node and pod status to control plane
+- Ensures containers are running and healthy
+
+### **kube-proxy**
+
+- **Manages network rules** on each node
+- **Load balances** traffic to pods
+- Implements **service discovery** through iptables/IPVS
+- Handles **network routing** for cluster services
+- Supports TCP, UDP, and SCTP protocols
+
+### **Container Runtime**
+
+- **Runs containers** (Docker, containerd, CRI-O, etc.)
+- Pulls images from registries
+- Manages container lifecycle (start, stop, restart)
+- Isolates containers using kernel features
+
+## **Cluster DNS**
+
+### **CoreDNS**
+
+- **Provides service discovery** within the cluster
+- **Resolves service names** to IP addresses
+- Allows pods to find each other by name
+- Supports **custom DNS entries** and configurations
+- Handles external DNS resolution
+
+### **Service Discovery**
+
+- Enables **pods to find services** via DNS names
+- Uses format: `service-name.namespace.svc.cluster.local`
+- **Automatically updates** as services/pods change
+- Provides **load balancing** across multiple pod instances
+- Works with **headless services** for direct pod access
+
+Here is a diagrammatic representation of a standard Kubernetes cluster architecture, showing where **kubelet**, **kubectl**, and **kubeadm** fit into the picture.
 
 ### High-Level Kubernetes Architecture Diagram
 
