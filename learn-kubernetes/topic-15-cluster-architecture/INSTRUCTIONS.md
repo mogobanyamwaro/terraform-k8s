@@ -226,6 +226,7 @@ Based on the diagram above, here is the role of each component in the visual con
   - It constantly **watches** the Pods and reports their status back to the API Server.
 
   Perfect! Now that everything is working, let's document the **complete bug-free process** that worked for you. I'll provide both the cleanup steps and the complete working procedure.
+
   <!--###############################################  ADDING THE CONTROL PLANE ##################################################################################################################### -->
 
 ## Step 1: Clean Up Everything
@@ -261,11 +262,11 @@ sudo apt-get upgrade -y
 
 # Disable swap
 sudo swapoff -a
-sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab # prevents swap from turning back on after reboot
 
 # Load kernel modules
-sudo modprobe overlay
-sudo modprobe br_netfilter
+sudo modprobe overlay  # for the container run times to sue to make container start quickly and use less disk space
+sudo modprobe br_netfilter # for network filtering module
 
 # Configure sysctl
 cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
@@ -315,6 +316,16 @@ runc --version
 
 ```bash
 # Download and install CNI plugins
+# CNI plugins are the "network cables" for your containers. They connect pods to each other and to the outside world
+# When you create a pod, it starts with NO network - it's completely isolated. CNI plugins give it:
+
+# An IP address
+
+# A way to talk to other pods
+
+# A way to receive traffic from services
+
+
 wget https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-arm64-v1.3.0.tgz
 sudo mkdir -p /opt/cni/bin
 sudo tar -C /opt/cni/bin -xzf cni-plugins-linux-arm64-v1.3.0.tgz
@@ -336,7 +347,7 @@ echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.
 # Install Kubernetes components
 sudo apt-get update
 sudo apt-get install -y kubelet kubeadm kubectl
-sudo apt-mark hold kubelet kubeadm kubectl
+sudo apt-mark hold kubelet kubeadm kubectl # prevents package manager to "pin" this three from being automatically updated
 ```
 
 ### G. Initialize the Cluster
@@ -347,6 +358,7 @@ IP_ADDR=$(hostname -I | awk '{print $1}')
 echo "My IP is: $IP_ADDR"
 
 # Initialize cluster
+
 sudo kubeadm init \
   --pod-network-cidr=10.244.0.0/16 \
   --apiserver-advertise-address=$IP_ADDR \
@@ -558,14 +570,6 @@ kubectl describe node kubemaster | grep Taints
 # Should show: node-role.kubernetes.io/control-plane:NoSchedule
 ```
 
-### Option B: Remove Master Taint (If You Want All Nodes Usable)
-
-If you want both nodes to run your apps:
-
-```bash
-kubectl taint nodes kubemaster node-role.kubernetes.io/control-plane:NoSchedule-
-```
-
 ## Test Your Multi-Node Cluster
 
 Deploy something and see which node it lands on:
@@ -617,110 +621,3 @@ kubectl get pods
 # Now run port-forward from your Mac
 
 kubectl port-forward pod/multi-test-74fbf5454f-6lbhp 8080:80
-
-## Steps
-
-### 1. Inspect your cluster
-
-```bash
-kubectl get nodes -o wide
-kubectl get componentstatuses   # Legacy; may show deprecated
-kubectl get pods -n kube-system
-```
-
-### 2. Control plane components (static pods)
-
-```bash
-# Components run as static pods on control plane
-kubectl get pods -n kube-system
-kubectl get pods -n kube-system -o wide   # See node placement
-# Look for: etcd-*, kube-apiserver-*, kube-scheduler-*, kube-controller-manager-*
-```
-
-### 3. kubeadm (kubeadm-based clusters only)
-
-**Initialize control plane:**
-
-```bash
-kubeadm init --pod-network-cidr=10.244.0.0/16
-# Or: kubeadm init --config kubeadm-config.yaml
-```
-
-**Join worker node:**
-
-```bash
-# On control plane: kubeadm token create --print-join-command
-# On worker: run the output (kubeadm join ...)
-```
-
-**Upgrade cluster:**
-
-```bash
-# Upgrade control plane first
-kubeadm upgrade plan
-kubeadm upgrade apply v1.XX.X
-# Drain node, upgrade kubelet, uncordon
-kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
-apt-get update && apt-get install -y kubelet=1.XX.X-00 kubectl=1.XX.X-00
-systemctl daemon-reload && systemctl restart kubelet
-kubectl uncordon <node>
-```
-
-### 4. etcd backup & restore (kubeadm clusters)
-
-**Backup:**
-
-```bash
-# Find etcd pod and cert paths
-ETCDCTL_API=3 etcdctl snapshot save /tmp/etcd-backup.db \
-  --endpoints=https://127.0.0.1:2379 \
-  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-  --cert=/etc/kubernetes/pki/etcd/server.crt \
-  --key=/etc/kubernetes/pki/etcd/server.key
-```
-
-**Restore:**
-
-```bash
-# Stop kube-apiserver, move existing etcd data, restore from snapshot, restart
-# Full procedure: https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/
-```
-
-**microk8s:** Use `microk8s snapshot save` / `microk8s snapshot restore`. Exam expects etcdctl commands.
-
-### 5. Cluster DNS
-
-```bash
-kubectl get svc -n kube-system   # kube-dns (CoreDNS)
-kubectl run test-dns --image=busybox:1.36 --rm -it --restart=Never -- nslookup kubernetes.default
-# Should resolve: kubernetes.default.svc.cluster.local
-```
-
-### 6. High availability (concept)
-
-- Multiple control plane nodes
-- Load balancer in front of kube-apiserver
-- Stacked etcd (etcd on each control plane) or external etcd cluster
-
----
-
-## Exam Tips
-
-| Command                                                                        | Purpose                      |
-| ------------------------------------------------------------------------------ | ---------------------------- |
-| `kubeadm init`                                                                 | Initialize control plane     |
-| `kubeadm join <master>:6443 --token X --discovery-token-ca-cert-hash sha256:Y` | Join worker                  |
-| `kubeadm upgrade plan`                                                         | Plan upgrade                 |
-| `kubeadm upgrade apply vX.Y.Z`                                                 | Upgrade control plane        |
-| `etcdctl snapshot save`                                                        | Backup etcd                  |
-| `etcdctl snapshot restore`                                                     | Restore etcd                 |
-| `kubectl drain NODE`                                                           | Prepare node for maintenance |
-| `kubectl uncordon NODE`                                                        | Mark node schedulable        |
-
-**Control plane components:** kube-apiserver (API), etcd (state), kube-scheduler (scheduling), kube-controller-manager (controllers)
-
-## Practice
-
-1. Run `kubectl get pods -n kube-system` and identify control plane pods.
-2. If using kubeadm: run `etcdctl snapshot save` to create a backup (use correct cert paths).
-3. Run `kubectl run dns-test --image=busybox:1.36 --rm -it --restart=Never -- nslookup kubernetes` and verify DNS works.
