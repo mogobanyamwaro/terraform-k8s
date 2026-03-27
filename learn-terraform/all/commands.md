@@ -3,9 +3,15 @@
 
 ## 🎯 Top Terraform Commands for Exam (80% Coverage)
 
-Based on exam patterns, these are the commands you MUST practice. Focus on these for the highest yield.
+Here's the difference:
 
----
+- **`terraform refresh`** — Updates the state file to match real-world infrastructure without modifying your configuration or making changes.
+
+- **`terraform apply -refresh-only`** — The modern replacement for `terraform refresh`. It updates the state to match real resources but requires explicit approval (like a normal apply).
+
+- **`terraform apply -refresh-only` (without approval)** — If you run it without `-auto-approve`, it will show you what changed between state and reality, then ask for confirmation before updating the state.
+
+## In short: `terraform refresh` is the old command; `-refresh-only` is the current way to sync state without changing infrastructure.
 
 ## 1. **Core Workflow Commands** (35% of exam)
 
