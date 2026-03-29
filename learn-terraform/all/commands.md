@@ -1,5 +1,6 @@
 <!-- https://github.com/devenes/HashiCorp-Certified-Terraform-Associate -->
 <!-- https://github.com/anuvindhs/Terraform-exam-StudyNotes?tab=readme-ov-file -->
+<!-- https://certiverse.com/#/dashboard -->
 
 ## 🎯 Top Terraform Commands for Exam (80% Coverage)
 
