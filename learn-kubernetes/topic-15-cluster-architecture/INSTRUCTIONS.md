@@ -1,5 +1,20 @@
 # Topic 15: Cluster Architecture & Installation
 
+## The 4 Components Explained Clearly
+
+| Component                   | One-sentence job                   | What it actually does                                                                              |
+| --------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------- |
+| **kube-apiserver**          | "The only gateway to the cluster"  | Authenticates, validates, and processes all requests. Nothing else talks directly to etcd.         |
+| **etcd**                    | "The cluster's brain/memory"       | Stores the entire cluster state (Pod specs, secrets, configs) as key-value data.                   |
+| **kube-scheduler**          | "The pod placement decision maker" | Watches for new Pods with no assigned node, picks the best worker node for each.                   |
+| **kube-controller-manager** | "The self-healing engine"          | Runs controllers (Node, ReplicaSet, etc.) that constantly push current state toward desired state. |
+
+| Component             | One-sentence job                        | What it actually does                                                                                                                                       |
+| --------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **kubelet**           | "The node's manager and pod babysitter" | Communicates with API server, receives Pod specifications, ensures containers are running and healthy. Reports node and Pod status back to control plane.   |
+| **kube-proxy**        | "The network traffic rule enforcer"     | Maintains network rules (iptables, IPVS, etc.) on each node. Enables service discovery and load balancing across Pods, both inside and outside the cluster. |
+| **container runtime** | "The container engine driver"           | Actually pulls images and runs containers (e.g., containerd, CRI-O, Docker). Follows instructions from kubelet via CRI (Container Runtime Interface).       |
+
 ## What You'll Learn
 
 - **Control plane components** – kube-apiserver, etcd, kube-scheduler, kube-controller-manager
@@ -13,9 +28,7 @@
 ### **kube-apiserver**
 
 - **Primary management interface** for the entire cluster
-- **Gatekeeper** that validates and configures data for API objects
-- Handles **RESTful API calls** from users, CLI tools, and other components
-- **Authenticates and authorizes** all requests
+- It validates and processes requests to update etcd
 - Only component that **communicates directly with etcd**
 
 ### **etcd**
