@@ -160,3 +160,217 @@ git tag final-submission
 ---
 
 **This follows the document strictly. No feature appears before its level.**
+
+
+
+Perfect question. The Loom walkthrough is **critical** - it's worth 5 points in the rubric and shows your communication skills. Here's a **4-minute script** that hits all the required points.
+
+---
+
+## Loom Walkthrough Script (4 Minutes)
+
+### Timing Breakdown
+
+| Section | Duration | Content |
+|---------|----------|---------|
+| Intro | 30 sec | What you built, quick demo |
+| Level 1 | 30 sec | Types, pure functions, tests |
+| Level 2 | 45 sec | API endpoints, database, seed |
+| Level 3 | 60 sec | Routing engine, state machine, weights (the tricky part) |
+| One tricky decision | 45 sec | Explain a hard choice you made |
+| What you'd change | 30 sec | Honest reflection |
+| Outro | 30 sec | Summary, invite questions |
+
+---
+
+## Full Script
+
+### Intro (0:00 - 0:30)
+
+> "Hi, I'm [your name]. This is my submission for the Simple Lend technical assessment.
+>
+> I built a multi-channel notification engine that sends alerts through email, SMS, or webhooks. Each recipient can set their own channel preferences with weights that sum to 100.
+>
+> Let me show you it working."
+
+**[Show terminal with server running]**
+
+> "Server is running on port 3000, PostgreSQL is up in Docker. Let me demonstrate."
+
+---
+
+### Demo - Create an Event (0:30 - 1:00)
+
+> "First, let's create a notification event."
+
+**[Run curl command in terminal]**
+
+```bash
+curl -X POST http://localhost:3000/api/events \
+  -H "Content-Type: application/json" \
+  -d '{"channel":"email","payload":{"message":"Test"},"recipientId":"user1","priority":"high"}'
+```
+
+> "You can see it returns the event with status 'queued' and an auto-generated ID."
+
+**[Show response]**
+
+> "Now let's list events sorted by urgency."
+
+```bash
+curl http://localhost:3000/api/events
+```
+
+> "They're sorted by priorityScore - critical events first, then older events get age bonus points."
+
+---
+
+### Demo - Routing Engine (1:00 - 1:45)
+
+> "Level 3 is where it gets interesting. Let me update a recipient's channel weights."
+
+```bash
+curl -X POST http://localhost:3000/api/delivery/weights \
+  -H "Content-Type: application/json" \
+  -d '{"recipientId":"user1","weights":{"email":40,"sms":50,"webhook":10}}'
+```
+
+> "The system validates that weights sum to exactly 100. Now let's dispatch this event through the state machine."
+
+```bash
+curl -X POST http://localhost:3000/api/delivery/dispatch \
+  -H "Content-Type: application/json" \
+  -d '{"eventId":"<event-id>"}'
+```
+
+> "First dispatch moves it from queued to processing. The DeliveryRouter randomly selects a channel based on the recipient's weights - like spinning a weighted wheel."
+
+**[Run second dispatch]**
+
+> "Second dispatch simulates delivery with 80% success rate. If it fails, it goes into retrying state up to 3 times with exponential backoff."
+
+---
+
+### Tricky Decision (1:45 - 2:30)
+
+> "The trickiest decision I made was around the priorityScore function.
+
+> The spec says it should be a pure function that returns a score based on priority and age. But 'age' depends on current time, which would normally make it impure.
+
+> I solved this by injecting the current time as a parameter:
+
+```typescript
+priorityScore(event: NotificationEvent, currentTime: Date): number
+```
+
+> This keeps the function pure and testable. In the API layer, I call it with `new Date()`.
+
+> Another tricky part was the state machine. I created a explicit validTransitions map:
+
+```typescript
+const validTransitions = {
+  queued: ['processing'],
+  processing: ['delivered', 'failed'],
+  failed: ['retrying'],
+  retrying: ['delivered', 'failed'],
+};
+```
+
+> Any illegal transition throws a descriptive error. This prevents silent failures."
+
+---
+
+### What You'd Change (2:30 - 3:00)
+
+> "If I had more time, I'd change three things:
+
+> First, I'd move the priorityScore sorting from memory to the database. Right now for GET /events, I fetch all events then sort in JavaScript. For production with millions of events, that won't scale.
+
+> Second, I'd implement proper quiet hours. The spec only requires representing them, not implementing. But in a real bank system, customers expect alerts to respect their sleep schedule.
+
+> Third, I'd add idempotency keys for webhooks to prevent duplicate processing when retries happen."
+
+---
+
+### Outro (3:00 - 4:00)
+
+> "Let me quickly show the analytics endpoint and webhook system."
+
+```bash
+curl http://localhost:3000/api/analytics
+```
+
+> "This returns delivery rates by channel, average processing times, and retry success rates - all computed from real data.
+
+> For webhooks, whenever an event changes status, it POSTs to all registered webhook URLs with up to 3 retries and exponential backoff.
+
+> The repo has a README with setup instructions that take under 5 minutes. All tests pass with `npm test`.
+
+> I've also included a DECISIONS.md file explaining every non-obvious choice.
+
+> Thanks for your time - I'm happy to discuss any part of the code in more detail."
+
+**[End video]**
+
+---
+
+## What to Show on Screen
+
+| Timestamp | Show This |
+|-----------|-----------|
+| 0:00-0:30 | Terminal with `npm start` running |
+| 0:30-1:00 | Terminal with curl commands and responses |
+| 1:00-1:45 | Terminal with weights and dispatch commands |
+| 1:45-2:30 | Code editor - show priorityScore or validTransitions |
+| 2:30-3:00 | Code editor - show where you'd make changes |
+| 3:00-4:00 | Terminal with analytics curl, then README.md |
+
+---
+
+## Checklist Before Recording
+
+- [ ] Server running (`npm start`)
+- [ ] Database running (`docker-compose up -d`)
+- [ ] Terminal ready with curl commands copy-pasted
+- [ ] Code editor open to the files you'll reference
+- [ ] README.md open
+- [ ] No private info visible (API keys, etc.)
+- [ ] Video kept under 4 minutes (practice once)
+
+---
+
+## Example Curl Commands to Have Ready
+
+```bash
+# Create event
+curl -X POST http://localhost:3000/api/events -H "Content-Type: application/json" -d '{"channel":"email","payload":{"message":"Test"},"recipientId":"user1","priority":"high"}'
+
+# List events
+curl http://localhost:3000/api/events
+
+# Update weights
+curl -X POST http://localhost:3000/api/delivery/weights -H "Content-Type: application/json" -d '{"recipientId":"user1","weights":{"email":40,"sms":50,"webhook":10}}'
+
+# Dispatch
+curl -X POST http://localhost:3000/api/delivery/dispatch -H "Content-Type: application/json" -d '{"eventId":"<paste-id>"}'
+
+# Analytics
+curl http://localhost:3000/api/analytics
+
+# Register webhook
+curl -X POST http://localhost:3000/api/webhooks -H "Content-Type: application/json" -d '{"url":"https://webhook.site/test"}'
+```
+
+---
+
+## Pro Tips
+
+1. **Practice once** before recording - timing is tight
+2. **Speak clearly** - they're evaluating communication
+3. **Don't read the script** - use bullet points and talk naturally
+4. **If you make a mistake**, pause and restart that section (you can edit)
+5. **End with "I'm happy to discuss this further"** - shows openness
+
+---
+
+**Would you like me to condense this further or add anything specific about Level 4?**
