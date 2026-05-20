@@ -1,4 +1,4 @@
-
+namei -l /home/douglasmogoba/perm-lab/secret.txt
 
 # 🧪 MINI PROJECT: Linux Permissions Playground
 
