@@ -4,6 +4,8 @@ Here's your **updated** Linux Permissions Playground with the critical lesson yo
 
 ---
 
+namei -l /home/douglasmogoba/perm-lab/secret.txt
+
 # 🧪 MINI PROJECT: Linux Permissions Playground
 
 We’ll create:
