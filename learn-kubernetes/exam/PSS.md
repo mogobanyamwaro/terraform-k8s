@@ -547,3 +547,536 @@ Think:
 > "Every pod entering this namespace must pass a security inspection before the API server accepts it."
 
 That's the entire Pod Security Standards system in one sentence.
+That's actually the right question.
+
+Most tutorials tell you:
+
+```yaml
+runAsNonRoot: true
+allowPrivilegeEscalation: false
+capabilities:
+  drop:
+  - ALL
+seccompProfile:
+  type: RuntimeDefault
+```
+
+without explaining **what problem each one solves**.
+
+Let's start from Linux fundamentals because Kubernetes is really just configuring Linux security features.
+
+---
+
+# Imagine Your Container Is a User on a Linux Server
+
+Suppose I give you a Linux VM.
+
+You can log in as:
+
+```text
+root
+```
+
+or
+
+```text
+douglas
+```
+
+Which one is more dangerous?
+
+Obviously:
+
+```text
+root
+```
+
+because root can:
+
+* delete files
+* kill processes
+* modify networking
+* mount disks
+* install software
+
+Containers are the same.
+
+---
+
+# 1. runAsNonRoot
+
+## Problem
+
+Many container images run as:
+
+```text
+UID 0
+```
+
+which means:
+
+```text
+root
+```
+
+inside the container.
+
+Example:
+
+```bash
+docker run nginx
+```
+
+Inside:
+
+```bash
+whoami
+```
+
+might return:
+
+```text
+root
+```
+
+---
+
+Imagine an attacker exploits nginx.
+
+Without restrictions:
+
+```text
+Attacker
+    ↓
+Gets shell
+    ↓
+Becomes root in container
+```
+
+Root in a container is not automatically root on the node, but it's still much more dangerous.
+
+---
+
+## Solution
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+```
+
+means:
+
+> "Kubernetes, do not start this container if it runs as root."
+
+Example:
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+```
+
+Now the process runs as:
+
+```text
+UID 1000
+```
+
+instead of:
+
+```text
+UID 0
+```
+
+---
+
+## Why PSS Requires It
+
+Because most applications do not need root.
+
+Web servers:
+
+```text
+nginx
+apache
+nodejs
+spring boot
+python
+```
+
+can usually run as ordinary users.
+
+---
+
+# 2. allowPrivilegeEscalation
+
+This one is less obvious.
+
+---
+
+## Problem
+
+Suppose your process starts as:
+
+```text
+UID 1000
+```
+
+Good.
+
+But what if it later finds a way to become root?
+
+Linux allows special programs called:
+
+```text
+setuid binaries
+```
+
+Example:
+
+```bash
+passwd
+sudo
+su
+```
+
+These can temporarily elevate privileges.
+
+---
+
+An attacker might exploit something and go:
+
+```text
+User
+   ↓
+Root
+```
+
+inside the container.
+
+---
+
+## Solution
+
+```yaml
+allowPrivilegeEscalation: false
+```
+
+means:
+
+> "Even if a process tries to gain more privileges later, deny it."
+
+Think:
+
+```text
+runAsNonRoot
+=
+Start as non-root
+
+allowPrivilegeEscalation
+=
+Stay non-root
+```
+
+---
+
+# 3. Linux Capabilities
+
+This is the hardest concept.
+
+---
+
+Most people think:
+
+```text
+Root = all permissions
+Non-root = no permissions
+```
+
+Linux is more granular.
+
+Root privileges are split into pieces called:
+
+```text
+Capabilities
+```
+
+Examples:
+
+```text
+CAP_NET_ADMIN
+CAP_SYS_ADMIN
+CAP_SYS_TIME
+CAP_NET_RAW
+```
+
+---
+
+Imagine:
+
+```text
+Root powers
+```
+
+are a bunch of keys.
+
+```text
+Network key
+Mount key
+Clock key
+Firewall key
+```
+
+Capabilities are those keys.
+
+---
+
+Example
+
+A process may not be root but still have:
+
+```text
+CAP_NET_ADMIN
+```
+
+allowing it to:
+
+```bash
+ip link
+iptables
+```
+
+modify networking.
+
+---
+
+## Why Dangerous?
+
+An attacker compromises your app.
+
+Then they discover:
+
+```text
+CAP_NET_ADMIN
+```
+
+They can manipulate networking.
+
+Or:
+
+```text
+CAP_SYS_ADMIN
+```
+
+which is almost god mode.
+
+---
+
+## Solution
+
+```yaml
+capabilities:
+  drop:
+  - ALL
+```
+
+means:
+
+> "Take away every extra Linux capability."
+
+---
+
+Think:
+
+```text
+Container gets no special powers.
+```
+
+---
+
+# 4. seccomp
+
+This is the coolest one.
+
+---
+
+Every program talks to the Linux kernel through:
+
+```text
+system calls
+```
+
+or
+
+```text
+syscalls
+```
+
+Examples:
+
+```c
+open()
+read()
+write()
+mount()
+fork()
+```
+
+---
+
+When nginx serves a webpage:
+
+```text
+nginx
+   ↓
+read file
+   ↓
+kernel
+```
+
+through syscalls.
+
+---
+
+# Problem
+
+The Linux kernel exposes hundreds of syscalls.
+
+Many are powerful:
+
+```text
+mount
+ptrace
+reboot
+clone
+```
+
+Applications usually need only a tiny subset.
+
+---
+
+Suppose attacker gains control of your process.
+
+Now they can call:
+
+```text
+dangerous syscalls
+```
+
+to attack the system.
+
+---
+
+# Solution
+
+seccomp means:
+
+```text
+Secure Computing Mode
+```
+
+It acts like a syscall firewall.
+
+Example:
+
+```yaml
+seccompProfile:
+  type: RuntimeDefault
+```
+
+means:
+
+> "Use the container runtime's safe list of allowed syscalls."
+
+---
+
+Think:
+
+```text
+Without seccomp:
+App can call 400 syscalls
+
+With seccomp:
+App can call 100 safe syscalls
+```
+
+---
+
+# Real-Life Analogy
+
+Imagine hiring a cleaner for your office.
+
+### No restrictions
+
+You give them:
+
+```text
+Master key
+Admin password
+Bank account access
+```
+
+Dangerous.
+
+---
+
+### runAsNonRoot
+
+You don't make them CEO.
+
+---
+
+### allowPrivilegeEscalation=false
+
+They can't become CEO later.
+
+---
+
+### drop ALL capabilities
+
+You don't give them extra keys.
+
+---
+
+### seccomp
+
+You restrict which rooms they can enter.
+
+---
+
+# Why Restricted Requires All Four
+
+Each protects against a different attack.
+
+| Setting                        | Protects Against    |
+| ------------------------------ | ------------------- |
+| runAsNonRoot                   | Starting as root    |
+| allowPrivilegeEscalation=false | Becoming root later |
+| drop ALL capabilities          | Extra Linux powers  |
+| seccomp RuntimeDefault         | Dangerous syscalls  |
+
+---
+
+# The Mental Model
+
+When you see:
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+
+  capabilities:
+    drop:
+    - ALL
+
+seccompProfile:
+  type: RuntimeDefault
+```
+
+Read it as:
+
+> "Run this application as an ordinary user, don't let it gain more power, don't give it special Linux privileges, and only allow a safe subset of kernel operations."
+
+That's why the `restricted` PSS profile insists on those settings: it assumes that one day your application might be compromised, and it tries to limit what an attacker can do afterward.
+
