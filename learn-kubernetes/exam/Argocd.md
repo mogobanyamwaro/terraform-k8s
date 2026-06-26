@@ -2,12 +2,12 @@ Absolutely. Learning Argo CD through a mini-project is one of the best approache
 
 Since you've already been working with:
 
-* Kubernetes (k3d)
-* Namespaces
-* Gateway API
-* MetalLB
-* Deployments and Services
-* GitHub Actions
+- Kubernetes (k3d)
+- Namespaces
+- Gateway API
+- MetalLB
+- Deployments and Services
+- GitHub Actions
 
 you can learn Argo CD in a way that feels practical rather than theoretical.
 
@@ -102,6 +102,14 @@ Install:
 ```bash
 kubectl apply -n argocd \
 -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# if got an error
+# Delete the problematic CRD
+kubectl delete crd applicationsets.argoproj.io
+
+# Reapply with server-side apply
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml \
+--server-side --force-conflicts
 ```
 
 Check:
@@ -169,10 +177,10 @@ spec:
         app: demo-app
     spec:
       containers:
-      - name: nginx
-        image: nginx:1.27
-        ports:
-        - containerPort: 80
+        - name: nginx
+          image: nginx:1.27
+          ports:
+            - containerPort: 80
 ```
 
 ---
@@ -188,8 +196,8 @@ spec:
   selector:
     app: demo-app
   ports:
-  - port: 80
-    targetPort: 80
+    - port: 80
+      targetPort: 80
 ```
 
 Push these files to GitHub.
@@ -210,7 +218,7 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/YOUR_USERNAME/argocd-demo.git
+    repoURL: git@github.com:mogobanyamwaro/argocd-for-learning.git # SSH URL
     targetRevision: HEAD
     path: app
 
@@ -222,9 +230,8 @@ spec:
     automated:
       prune: true
       selfHeal: true
-
     syncOptions:
-    - CreateNamespace=true
+      - CreateNamespace=true
 ```
 
 Apply:
@@ -391,12 +398,12 @@ Kubernetes
 
 Features:
 
-* Multiple namespaces
-* Helm charts
-* Gateway API
-* Secrets
-* Auto-sync
-* Self-healing
+- Multiple namespaces
+- Helm charts
+- Gateway API
+- Secrets
+- Auto-sync
+- Self-healing
 
 This will make you comfortable with the Argo CD concepts commonly used in DevOps and Platform Engineering roles.
 
@@ -413,5 +420,4 @@ This will make you comfortable with the Argo CD concepts commonly used in DevOps
 9. Learn multi-environment deployments
 10. Learn Argo Rollouts (advanced)
 
-The first six steps can be completed in a single afternoon on your existing k3d cluster and will give you a solid understanding of GitOps and Argo CD.
----
+## The first six steps can be completed in a single afternoon on your existing k3d cluster and will give you a solid understanding of GitOps and Argo CD.
