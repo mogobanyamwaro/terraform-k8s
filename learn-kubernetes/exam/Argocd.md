@@ -353,71 +353,141 @@ Argo CD restores the working version.
 
 ---
 
-# Phase 9: Helm
+Yep. Full minimal-overhead process for a **private GitHub repo + Argo CD + SSH deploy key**.
 
-Replace raw YAML with Helm:
+**1. Generate A Key**
+Run this on your machine:
 
-```text
-argocd-demo/
-└── charts/
-    └── webapp/
+```bash
+ssh-keygen -t ed25519 -C "argocd-demo-app" -f ~/.ssh/argocd_demo_app
 ```
 
-Then update Application:
+When it asks for a passphrase, press Enter for no passphrase. Argo CD needs to use the key non-interactively.
+
+This creates:
+
+```text
+~/.ssh/argocd_demo_app      # private key, give this to Argo CD
+~/.ssh/argocd_demo_app.pub  # public key, give this to GitHub
+```
+
+**2. Add Public Key To GitHub**
+Print the public key:
+
+```bash
+cat ~/.ssh/argocd_demo_app.pub
+```
+
+Copy the output.
+
+In GitHub:
+
+```text
+Repo -> Settings -> Deploy keys -> Add deploy key
+```
+
+Use something like:
+
+```text
+Title: argocd-demo-app
+Key: paste the .pub key
+Allow write access: unchecked
+```
+
+Leave write access off unless Argo CD or another tool needs to push back to the repo.
+
+**3. Set The App Back To SSH**
+Your [application.yaml](/Users/douglas/Documents/k8s/argocd/application.yaml:10) should use the SSH repo URL:
 
 ```yaml
-source:
-  repoURL: ...
-  path: charts/webapp
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-app
+  namespace: argocd
+spec:
+  project: default
+
+  source:
+    repoURL: git@github.com:mogobanyamwaro/argocd.git
+    targetRevision: main
+    path: app
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: demo
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
 ```
 
-This is how many production teams use Argo CD.
+**4. Add The Private Repo To Argo CD**
+If you have the Argo CD CLI logged in:
 
----
-
-# Phase 10: Production-Level Project
-
-After finishing the above, build this:
-
-```text
-GitHub
-│
-├── frontend
-├── backend
-├── mysql
-└── ingress/gateway
-
-        ↓
-
-Argo CD
-
-        ↓
-
-Kubernetes
+```bash
+argocd repo add git@github.com:mogobanyamwaro/argocd.git \
+  --ssh-private-key-path ~/.ssh/argocd_demo_app
 ```
 
-Features:
+That is the cleanest method. Argo CD’s official docs support adding SSH private repos with `argocd repo add ... --ssh-private-key-path`.
 
-- Multiple namespaces
-- Helm charts
-- Gateway API
-- Secrets
-- Auto-sync
-- Self-healing
+**5. Apply The Application**
+Then apply the app manifest:
 
-This will make you comfortable with the Argo CD concepts commonly used in DevOps and Platform Engineering roles.
+```bash
+kubectl apply -f application.yaml
+```
 
-### Suggested learning order
+**6. Sync Or Let Auto-Sync Handle It**
+Since your app has automated sync enabled, Argo CD should pick it up automatically.
 
-1. Install Argo CD
-2. Create an Application
-3. Sync from Git
-4. Enable auto-sync
-5. Test self-healing
-6. Learn Projects
-7. Learn Helm
-8. Learn App of Apps pattern
-9. Learn multi-environment deployments
-10. Learn Argo Rollouts (advanced)
+You can force a sync:
 
-## The first six steps can be completed in a single afternoon on your existing k3d cluster and will give you a solid understanding of GitOps and Argo CD.
+```bash
+argocd app sync demo-app
+```
+
+Then check status:
+
+```bash
+argocd app get demo-app
+```
+
+Or with Kubernetes:
+
+```bash
+kubectl get application demo-app -n argocd
+kubectl get pods -n demo
+kubectl get svc -n demo
+```
+
+**Alternative Without Argo CD CLI**
+You can also create the repo credential as a Kubernetes Secret:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-mogobanyamwaro-argocd
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  type: git
+  url: git@github.com:mogobanyamwaro/argocd.git
+  sshPrivateKey: |
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    paste-private-key-here
+    -----END OPENSSH PRIVATE KEY-----
+```
+
+Apply it:
+
+```bash
+kubectl apply -f repo-secret.yaml
+kubectl apply -f application.yaml
+```
