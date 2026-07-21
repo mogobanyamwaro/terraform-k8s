@@ -184,3 +184,65 @@ When you book a Hilux (PVC), the rental company uses the car model specification
 In modern Kubernetes clusters, you typically create only **PVCs**. The **StorageClass** automatically provisions and binds a **PV**, so you rarely need to create PVs manually.
 
 ---
+
+Here's the summary:
+
+| Command                     | What it does                                              | Existing Pods                                             | New Pods                 |
+| --------------------------- | --------------------------------------------------------- | --------------------------------------------------------- | ------------------------ |
+| **`kubectl cordon <node>`** | Marks a node as **unschedulable**                         | ✅ Keep running                                           | ❌ No new Pods scheduled |
+| **`kubectl drain <node>`**  | Marks the node unschedulable **and evicts existing Pods** | ❌ Evicted (except DaemonSets/static Pods unless handled) | ❌ No new Pods scheduled |
+
+### Visual
+
+Before:
+
+```text
+Node
+├── Pod A
+├── Pod B
+└── Pod C
+```
+
+**After `cordon`:**
+
+```text
+Node (Unschedulable)
+├── Pod A ✓
+├── Pod B ✓
+└── Pod C ✓
+
+New Pod ✖
+```
+
+Pods continue running, but no new Pods are placed on the node.
+
+---
+
+**After `drain`:**
+
+```text
+Node (Unschedulable)
+└── (No application Pods)
+
+Pods A, B, C
+        ↓
+Rescheduled to other nodes
+```
+
+The node is emptied of workload Pods so it can be safely maintained.
+
+### Typical use
+
+- **`cordon`** → Prevent new workloads from being scheduled while letting current workloads finish naturally.
+- **`drain`** → Before maintenance, upgrades, or rebooting a node. It safely moves workloads to other nodes.
+
+### Memory trick
+
+- **Cordon** = **Close the door** (no one new comes in).
+- **Drain** = **Empty the room** (everyone leaves, and no one new enters).
+
+> Note: `drain` automatically performs a `cordon` as part of its operation. To allow scheduling on the node again afterward, use:
+>
+> ```bash
+> kubectl uncordon <node>
+> ```
