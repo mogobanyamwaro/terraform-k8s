@@ -246,3 +246,107 @@ The node is emptied of workload Pods so it can be safely maintained.
 > ```bash
 > kubectl uncordon <node>
 > ```
+
+---
+
+## 1. CRD (Custom Resource Definition)
+
+A **CRD** lets you **extend Kubernetes with your own resource types**.
+
+Think of it as:
+
+> **CRD = Create your own Kubernetes object.**
+
+Example:
+
+Normally Kubernetes has:
+
+- Pod
+- Deployment
+- Service
+
+With a CRD, you can create something like:
+
+```yaml
+kind: Database
+kind: Backup
+kind: Certificate
+kind: Gateway
+```
+
+These aren't built into Kubernetes—they're added by installing a CRD.
+
+**Examples of projects that use CRDs:**
+
+- Cert-Manager → `Certificate`
+- ArgoCD → `Application`
+- Prometheus Operator → `ServiceMonitor`
+- Gateway API → `Gateway`, `HTTPRoute`
+
+**Memory trick:**
+
+> **CRD = Add new resource types to Kubernetes.**
+
+---
+
+## 2. Gateway API
+
+Gateway API is a **modern replacement/improvement over Ingress** for managing network traffic into a cluster.
+
+Think of it as:
+
+> **Gateway API = More powerful and flexible Ingress.**
+
+Instead of one Ingress resource, it separates responsibilities:
+
+```
+GatewayClass
+      │
+      ▼
+Gateway
+      │
+      ▼
+HTTPRoute
+      │
+      ▼
+Service
+      │
+      ▼
+Pods
+```
+
+### Components
+
+- **GatewayClass** → Defines which Gateway controller to use (NGINX, Envoy, Istio, etc.).
+- **Gateway** → Listens for incoming traffic (ports, listeners, TLS).
+- **HTTPRoute** → Defines routing rules (hostnames, paths, headers) to Services.
+
+### Example flow
+
+```
+Internet
+    │
+    ▼
+Gateway
+    │
+HTTPRoute
+    │
+Service
+    │
+Pods
+```
+
+---
+
+## Quick comparison
+
+| Feature     | CRD                                            | Gateway API                                |
+| ----------- | ---------------------------------------------- | ------------------------------------------ |
+| What is it? | Mechanism to add new Kubernetes resource types | A set of CRDs for advanced traffic routing |
+| Purpose     | Extend Kubernetes                              | Manage ingress/network traffic             |
+| Example     | `Certificate`, `Application`, `Gateway`        | `Gateway`, `GatewayClass`, `HTTPRoute`     |
+
+### Memory trick
+
+- **CRD** = **Create new Kubernetes resource types.**
+- **Gateway API** = **Use those resources to route traffic into your cluster.**
