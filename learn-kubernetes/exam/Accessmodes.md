@@ -350,7 +350,9 @@ Pods
 
 - **CRD** = **Create new Kubernetes resource types.**
 - **Gateway API** = **Use those resources to route traffic into your cluster.**
+
 ---
+
 Exactly. A **ConfigMap itself is not inherently a file**. Kubernetes knows whether to expose it as a file or environment variable based on **how you reference it in the Pod/Deployment**.
 
 For example, suppose you have:
@@ -374,17 +376,17 @@ If your Deployment does this:
 ```yaml
 spec:
   containers:
-  - name: nginx
-    image: nginx
-    volumeMounts:
-    - name: config
-      mountPath: /etc/nginx/nginx.conf
-      subPath: nginx.conf
+    - name: nginx
+      image: nginx
+      volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
 
   volumes:
-  - name: config
-    configMap:
-      name: nginx-config
+    - name: config
+      configMap:
+        name: nginx-config
 ```
 
 Kubernetes sees:
@@ -408,18 +410,18 @@ So this part is what tells Kubernetes **"mount this ConfigMap as files"**:
 
 ```yaml
 volumes:
-- name: config
-  configMap:
-    name: nginx-config
+  - name: config
+    configMap:
+      name: nginx-config
 ```
 
 And this tells Kubernetes **where those files should appear inside the container**:
 
 ```yaml
 volumeMounts:
-- name: config
-  mountPath: /etc/nginx/nginx.conf
-  subPath: nginx.conf
+  - name: config
+    mountPath: /etc/nginx/nginx.conf
+    subPath: nginx.conf
 ```
 
 `subPath` specifically says:
@@ -430,8 +432,8 @@ Without `subPath`, you normally mount the ConfigMap as a **directory**:
 
 ```yaml
 volumeMounts:
-- name: config
-  mountPath: /etc/config
+  - name: config
+    mountPath: /etc/config
 ```
 
 Then every ConfigMap key becomes a file:
@@ -456,8 +458,8 @@ Alternatively, if you write:
 
 ```yaml
 envFrom:
-- configMapRef:
-    name: nginx-config
+  - configMapRef:
+      name: nginx-config
 ```
 
 you're telling Kubernetes:
@@ -480,3 +482,91 @@ ConfigMap
 
 **The ConfigMap doesn't decide. The Deployment/Pod decides how the ConfigMap is consumed.**
 
+---
+
+In Kubernetes, **probes are health checks that Kubernetes performs on your container**.
+
+There are **3 main probes**:
+
+| Probe               | Simple question Kubernetes asks        | If it fails                                                       |
+| ------------------- | -------------------------------------- | ----------------------------------------------------------------- |
+| **Liveness Probe**  | "Is the app still alive?"              | Kubernetes **restarts the container**                             |
+| **Readiness Probe** | "Is the app ready to receive traffic?" | Kubernetes **stops sending traffic** to the Pod                   |
+| **Startup Probe**   | "Has the app finished starting?"       | Kubernetes waits; if it keeps failing, **restarts the container** |
+
+### 1. Liveness Probe
+
+Think:
+
+> **Are you alive?**
+
+Your application might be running but stuck or frozen.
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+```
+
+If `/health` keeps failing:
+
+**Kubernetes → restarts the container.**
+
+---
+
+### 2. Readiness Probe
+
+Think:
+
+> **Are you ready to work?**
+
+Maybe your application is alive, but the database connection is down, so it shouldn't receive requests.
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+```
+
+If it fails:
+
+**Kubernetes → Pod stays running → but Service stops sending traffic to it.**
+
+When it succeeds again, traffic resumes.
+
+---
+
+### 3. Startup Probe
+
+Think:
+
+> **Have you finished starting yet?**
+
+Useful for applications that take a long time to start.
+
+```yaml
+startupProbe:
+  httpGet:
+    path: /health
+    port: 8080
+```
+
+While the startup probe hasn't succeeded, Kubernetes **doesn't run the liveness/readiness probes yet**.
+
+### Easy way to remember
+
+```text
+Startup   → Have you started?
+Readiness → Can you receive traffic?
+Liveness  → Are you still alive?
+```
+
+And the most important distinction:
+
+```text
+Readiness fails → REMOVE FROM TRAFFIC
+Liveness fails  → RESTART CONTAINER
+Startup fails   → RESTART if app never starts
+```
