@@ -570,3 +570,342 @@ Readiness fails → REMOVE FROM TRAFFIC
 Liveness fails  → RESTART CONTAINER
 Startup fails   → RESTART if app never starts
 ```
+
+---
+Gateway API and MetalLB solve **different problems**, but they often work together in bare-metal Kubernetes clusters.
+
+Think of it as this:
+
+* **MetalLB** = Gives your Kubernetes cluster a real IP address.
+* **Gateway API** = Decides what to do with traffic that arrives on that IP address.
+
+Here's the flow:
+
+```text
+Internet / LAN
+       |
+       |
+  192.168.1.100   <--- MetalLB assigns this IP
+       |
++--------------------+
+| Gateway Controller |  (NGINX Gateway, Envoy Gateway, Traefik, etc.)
++--------------------+
+       |
+ Gateway API Rules
+ (Gateway, HTTPRoute)
+       |
++--------------+-------------+
+|              |             |
+Service A   Service B    Service C
+```
+
+---
+
+# 1. What MetalLB does
+
+Normally, in cloud providers:
+
+```yaml
+kind: Service
+spec:
+  type: LoadBalancer
+```
+
+AWS automatically creates
+
+* Elastic IP
+* Network Load Balancer
+* Public IP
+
+But on:
+
+* kubeadm
+* k3s
+* k3d
+* MicroK8s
+* Bare metal
+
+there is **no cloud provider**.
+
+So the Service stays:
+
+```
+EXTERNAL-IP <pending>
+```
+
+MetalLB fixes this.
+
+Example:
+
+```yaml
+kind: Service
+spec:
+  type: LoadBalancer
+```
+
+Without MetalLB
+
+```
+EXTERNAL-IP
+<pending>
+```
+
+With MetalLB
+
+```
+EXTERNAL-IP
+192.168.64.150
+```
+
+Now traffic can reach your cluster.
+
+---
+
+# 2. What Gateway API does
+
+Gateway API does **not** assign IP addresses.
+
+Instead it answers:
+
+> "Someone reached 192.168.64.150. Which application should receive the request?"
+
+For example
+
+```
+http://shop.company.com
+```
+
+goes to
+
+```
+shop-service
+```
+
+while
+
+```
+http://api.company.com
+```
+
+goes to
+
+```
+api-service
+```
+
+---
+
+# 3. Why they work together
+
+Imagine you deploy an NGINX Gateway Controller.
+
+It creates a Service:
+
+```yaml
+kind: Service
+type: LoadBalancer
+```
+
+MetalLB sees this and assigns
+
+```
+192.168.64.150
+```
+
+Now clients can connect.
+
+Gateway API then routes requests.
+
+```
+192.168.64.150
+          |
+          |
+Gateway Controller
+          |
+     HTTPRoute
+          |
+      Backend Service
+```
+
+---
+
+# Example
+
+Suppose you have
+
+```
+Frontend
+
+Backend
+
+Monitoring
+```
+
+Gateway API
+
+```yaml
+Gateway
+```
+
+listens on
+
+```
+80
+443
+```
+
+HTTPRoutes
+
+```
+frontend.company.com
+        |
+        v
+frontend-service
+```
+
+```
+api.company.com
+       |
+       v
+backend-service
+```
+
+```
+grafana.company.com
+        |
+        v
+grafana-service
+```
+
+MetalLB provides
+
+```
+192.168.64.150
+```
+
+DNS
+
+```
+frontend.company.com -> 192.168.64.150
+
+api.company.com -> 192.168.64.150
+
+grafana.company.com -> 192.168.64.150
+```
+
+Gateway API inspects the `Host` header and forwards to the correct service.
+
+---
+
+# 4. Without MetalLB
+
+Gateway API still exists.
+
+But
+
+```
+kubectl get svc
+```
+
+shows
+
+```
+gateway-service
+LoadBalancer
+EXTERNAL-IP <pending>
+```
+
+Nobody outside the cluster can access it.
+
+Gateway rules are configured, but there is no external IP to receive traffic.
+
+---
+
+# 5. Without Gateway API
+
+MetalLB still assigns
+
+```
+192.168.64.150
+```
+
+But then all traffic simply lands on the Service.
+
+You lose advanced routing such as:
+
+* host-based routing
+* path-based routing
+* traffic splitting
+* canary deployments
+* reusable routing policies
+
+---
+
+# 6. How they fit together
+
+```
+Client
+   |
+   |
+192.168.64.150
+   |
+MetalLB
+(assigns IP)
+   |
+LoadBalancer Service
+   |
+NGINX Gateway Controller
+   |
+Gateway
+   |
+HTTPRoute
+   |
+Service
+   |
+Pods
+```
+
+---
+
+# Real cloud example (AWS)
+
+On AWS you normally **don't use MetalLB** because AWS already provides the LoadBalancer functionality.
+
+```
+Internet
+      |
+AWS Network Load Balancer
+      |
+Gateway Controller
+      |
+Gateway API
+      |
+Services
+      |
+Pods
+```
+
+The equivalent mapping is:
+
+| Bare Metal         | AWS                                                                               |
+| ------------------ | --------------------------------------------------------------------------------- |
+| MetalLB            | AWS Load Balancer (created by the cloud provider or AWS Load Balancer Controller) |
+| Gateway API        | Gateway API (same concepts)                                                       |
+| Gateway Controller | NGINX Gateway, Envoy Gateway, Kong, Traefik, etc.                                 |
+| HTTPRoute          | HTTPRoute                                                                         |
+| Service            | Service                                                                           |
+| Pods               | Pods                                                                              |
+
+---
+
+## Simple analogy
+
+Imagine a shopping mall:
+
+* **MetalLB** is the **street address** of the mall. Without an address, no one can find the building.
+* **Gateway API** is the **directory at the entrance** that tells visitors where to go ("Shop A on Floor 1", "Food Court on Floor 2", etc.).
+* **Services** are the individual shops.
+* **Pods** are the staff working inside each shop.
+
+The address gets visitors to the building, and the directory gets them to the correct destination. In the same way, **MetalLB makes your cluster reachable**, while **Gateway API directs incoming traffic to the right Kubernetes Services**.
+
