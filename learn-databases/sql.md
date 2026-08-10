@@ -24,6 +24,63 @@ Or load the schema from the shell:
 docker exec -i ecommerce psql -U postgres -d ecommerce < learn-databases/postgres.sql
 ```
 
+### Explore the server
+
+Once connected with `psql`, use these commands to orient yourself.
+
+**List all databases**
+
+```sql
+SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;
+```
+
+Count them:
+
+```sql
+SELECT COUNT(*) AS database_count
+FROM pg_database
+WHERE datistemplate = false;
+```
+
+In `psql`, you can also use:
+
+```text
+\l
+```
+
+**List tables in the `ecommerce` database**
+
+Make sure you are connected to `ecommerce` (`\c ecommerce`), then run:
+
+```sql
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND table_type = 'BASE TABLE'
+ORDER BY table_name;
+```
+
+Count them:
+
+```sql
+SELECT COUNT(*) AS table_count
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND table_type = 'BASE TABLE';
+```
+
+In `psql`:
+
+```text
+\dt
+```
+
+To see columns for one table:
+
+```text
+\d employees
+```
+
 ## Sample schema and data
 
 Run this first to create sample tables and seed data. The same script is also available as [`postgres.sql`](postgres.sql).
