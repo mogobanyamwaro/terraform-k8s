@@ -1,4 +1,34 @@
 # SQL Engineer Interview Questions and Answers
+
+Practice questions and answers for SQL engineer interviews using a PostgreSQL ecommerce schema.
+
+## Setup
+
+Connect to the local PostgreSQL instance:
+
+| Setting | Value |
+| --- | --- |
+| Host | `localhost` |
+| Port | `5432` |
+| Database | `ecommerce` |
+| User | `postgres` |
+| Password | `1234` |
+
+```bash
+docker exec -it ecommerce psql -U postgres -d ecommerce
+```
+
+Or load the schema from the shell:
+
+```bash
+docker exec -i ecommerce psql -U postgres -d ecommerce < learn-databases/postgres.sql
+```
+
+## Sample schema and data
+
+Run this first to create sample tables and seed data. The same script is also available as [`postgres.sql`](postgres.sql).
+
+```sql
 -- Run this first to create sample tables
 
 -- Drop tables if they exist
@@ -183,8 +213,34 @@ INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES
 (10, 8, 1, 89.99),
 (11, 10, 1, 79.99),
 (12, 3, 3, 149.99);
+```
 
-Your script uses **PostgreSQL**, based on features such as `SERIAL`, materialized views, PL/pgSQL functions, procedures, and event triggers.
+This guide uses **PostgreSQL**, based on features such as `SERIAL`, materialized views, PL/pgSQL functions, procedures, and event triggers.
+
+## Table of contents
+
+- [1. Database fundamentals](#1-database-fundamentals)
+- [2. ACID and transactions](#2-acid-and-transactions)
+- [3. Basic query questions](#3-basic-query-questions)
+- [4. Aggregate functions and grouping](#4-aggregate-functions-and-grouping)
+- [5. Joins](#5-joins)
+- [6. Subqueries and CTEs](#6-subqueries-and-ctes)
+- [7. Window functions](#7-window-functions)
+- [8. Data-quality and audit questions](#8-data-quality-and-audit-questions)
+- [9. Views](#9-views)
+- [10. Materialized views](#10-materialized-views)
+- [11. Functions](#11-functions)
+- [12. Stored procedures](#12-stored-procedures)
+- [13. Triggers](#13-triggers)
+- [14. Event triggers](#14-event-triggers)
+- [15. Constraints](#15-constraints)
+- [16. Indexes and performance](#16-indexes-and-performance)
+- [17. Data manipulation](#17-data-manipulation)
+- [18. Schema-design improvement questions](#18-schema-design-improvement-questions)
+- [19. Security questions](#19-security-questions)
+- [20. Advanced practical challenges](#20-advanced-practical-challenges)
+- [21. Rapid-fire interview questions](#21-rapid-fire-interview-questions)
+- [Recommended live interview exercises](#recommended-live-interview-exercises)
 
 ---
 
