@@ -1,6 +1,6 @@
 # Storage Deep Dive
 
-Storage is roughly a quarter of the exam across two objective domains, it takes the longest, and it is where a mistake can stop the machine from booting. This file is the mental model and the decision trees. The step-by-step tasks are in `28.md` through `32.md`.
+Storage is roughly a quarter of the exam across two objective domains, it takes the longest, and it is where a mistake can stop the machine from booting. This file is the mental model and the decision trees. The step-by-step tasks are in `28-disks-partitions.md` through `32-nfs-autofs.md`.
 
 ---
 

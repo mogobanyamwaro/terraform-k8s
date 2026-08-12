@@ -2,7 +2,7 @@
 
 "Interrupt the boot process to gain access to a system" and "modify the system bootloader" are stated objectives. The root password reset is close to guaranteed on the exam. Recovering from your own bad `/etc/fstab` is not on the objective list and is the skill most likely to save your exam.
 
-Step-by-step tasks are in `16.md` and `17.md`.
+Step-by-step tasks are in `16-boot-interrupt-root-recovery.md` and `17-bootloader.md`.
 
 **Practise these in a VM with a snapshot until they are muscle memory.** They are the tasks where hesitation costs the most time.
 

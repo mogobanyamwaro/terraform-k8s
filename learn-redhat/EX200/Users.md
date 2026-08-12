@@ -1,6 +1,6 @@
 # Users And Groups Deep Dive
 
-Account creation, password aging, sudo, and the files behind them. This is one of the more mechanical domains — the commands are short and the marks are easy, provided you use the right flag. Step-by-step tasks are in `10.md` and `11.md`.
+Account creation, password aging, sudo, and the files behind them. This is one of the more mechanical domains — the commands are short and the marks are easy, provided you use the right flag. Step-by-step tasks are in `10-users-groups.md` and `11-password-aging-sudo.md`.
 
 ---
 

@@ -2,7 +2,7 @@
 
 systemd is the thread running through most of the exam. Services, targets, boot, timers, mount units, container units, and user units are all the same mechanism. Understanding it once means understanding all of them.
 
-Step-by-step tasks are in `14.md`, `15.md`, and `19.md`.
+Step-by-step tasks are in `14-systemd-services.md`, `15-systemd-targets-boot.md`, and `19-scheduling-cron-at.md`.
 
 ---
 
@@ -596,7 +596,7 @@ su - alice -c 'systemctl --user status myapp'
 
 ## Container units
 
-Two mechanisms, both covered in `35.md`.
+Two mechanisms, both covered in `35-containers-systemd.md`.
 
 ```bash
 # podman generate systemd — deprecated in Podman 5 but still present

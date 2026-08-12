@@ -1,6 +1,6 @@
 # SELinux Deep Dive
 
-SELinux has seven listed objectives, appears as a hidden cause inside other tasks, and is the topic candidates most often work around instead of fixing. This file is the model and the diagnostic flow. Step-by-step tasks are in `27.md`.
+SELinux has seven listed objectives, appears as a hidden cause inside other tasks, and is the topic candidates most often work around instead of fixing. This file is the model and the diagnostic flow. Step-by-step tasks are in `27-selinux.md`.
 
 **The single most important habit: when something that should work does not, check SELinux before you doubt anything else.**
 

@@ -284,7 +284,7 @@ Then verify your work still holds. This trains the reflex the exam grades.
 
 **4. Time yourself.** Real exam tasks take 5-10 minutes each. If a single LVM task takes you 25 minutes, that is the finding, and it is more useful than knowing you eventually got it right.
 
-**5. Break things deliberately.** `36.md` is built for this. Corrupt `fstab`, wreck a SELinux context, disable a service, forget a firewall rule, then fix it. Diagnosis under pressure is a separate skill from configuration.
+**5. Break things deliberately.** `36-break-and-fix-drill.md` is built for this. Corrupt `fstab`, wreck a SELinux context, disable a service, forget a firewall rule, then fix it. Diagnosis under pressure is a separate skill from configuration.
 
 **6. Use `man`, not the internet.** The exam gives you `man`, `info`, and `/usr/share/doc` and nothing else. Every time you reach for a search engine in practice, you are training a habit you cannot use.
 

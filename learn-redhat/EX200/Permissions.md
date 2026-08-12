@@ -2,7 +2,7 @@
 
 Standard permissions, special bits, `umask`, ACLs, and the collaborative directory. Two of these are stated objectives in their own right — "create and configure set-GID directories for collaboration" and "diagnose and correct file permission problems" — and permissions turn up as a hidden cause inside storage, container, and web-server tasks.
 
-Step-by-step tasks are in `06.md` and `12.md`.
+Step-by-step tasks are in `06-standard-permissions-umask.md` and `12-special-permissions-acls.md`.
 
 ---
 

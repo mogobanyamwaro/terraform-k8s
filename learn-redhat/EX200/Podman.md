@@ -2,7 +2,7 @@
 
 Six container objectives, and the whole domain reduces to three ideas that catch people out: **rootful and rootless are separate worlds**, **bind mounts need `:Z`**, and **`podman run -d` does not survive a reboot**.
 
-Step-by-step tasks are in `34.md` and `35.md`.
+Step-by-step tasks are in `34-podman-images-running.md` and `35-containers-systemd.md`.
 
 **A caveat on exam scope.** Containers were part of RHCSA for RHEL 8 and 9. Red Hat's published RHEL 9 and RHEL 10 objective lists have varied on whether the container section is included. Prepare it — it is a small, self-contained domain and the cost of being wrong the other way is high.
 
@@ -478,7 +478,7 @@ podman volume inspect webdata -f '{{.Mountpoint}}'
 
 ## As a systemd service
 
-**Covered fully in `35.md`. The essentials:**
+**Covered fully in `35-containers-systemd.md`. The essentials:**
 
 ### Rootful
 

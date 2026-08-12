@@ -249,7 +249,7 @@ podman run -d --name web ...                  # gone after a reboot
 podman run -d --restart=always ...            # STILL gone after a reboot
 ```
 
-**Any task mentioning boot, "as a service", or "automatically" needs a systemd unit.** See `35.md`.
+**Any task mentioning boot, "as a service", or "automatically" needs a systemd unit.** See `35-containers-systemd.md`.
 
 ### 13. A Quadlet file without `[Install] WantedBy=`
 

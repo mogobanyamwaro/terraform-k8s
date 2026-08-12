@@ -1,6 +1,6 @@
 # Shell Scripting Deep Dive
 
-Four objectives, roughly 5% of the exam, and entirely predictable: conditionals, loops, positional parameters, and processing command output. The scripts the exam asks for are twenty lines at most. Step-by-step tasks are in `33.md`.
+Four objectives, roughly 5% of the exam, and entirely predictable: conditionals, loops, positional parameters, and processing command output. The scripts the exam asks for are twenty lines at most. Step-by-step tasks are in `33-shell-scripting.md`.
 
 **The single most common way to fail a scripting task is forgetting `chmod +x`.**
 

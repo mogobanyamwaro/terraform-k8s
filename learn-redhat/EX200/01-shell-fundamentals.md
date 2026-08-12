@@ -1,0 +1,387 @@
+# 01. Shell Fundamentals And File Management
+
+**Objectives:** Access a shell prompt and issue commands with correct syntax. Create, delete, copy, and move files and directories.
+
+## Concept Refresher
+
+These are the operations underneath every other task on the exam. You will not get a task that says "copy a file", but you will get twenty tasks that require it while the clock runs.
+
+### Where you are and what is there
+
+```bash
+pwd                     # print working directory
+cd /etc                 # absolute path
+cd ../..                # relative, up two levels
+cd                      # home directory
+cd -                    # PREVIOUS directory. Toggles. Very useful
+cd ~alice               # alice's home directory
+
+ls                      # plain
+ls -l                   # long: perms, links, owner, group, size, mtime, name
+ls -a                   # include dotfiles
+ls -la                  # both, the one you will type most
+ls -lh                  # human-readable sizes
+ls -ld /etc             # the DIRECTORY itself, not its contents
+ls -lt                  # newest first
+ls -ltr                 # oldest first, newest at the BOTTOM. Best for logs
+ls -lR                  # recursive
+ls -li                  # show inode numbers
+ls -lZ                  # show SELinux context
+```
+
+`ls -ld` is the one people forget. Without `-d`, asking about a directory lists what is inside it instead of describing it.
+
+### Reading an `ls -l` line
+
+```text
+-rw-r--r--. 1 root root 1024 Aug 18 14:32 file.txt
+│└─┬┘└┬┘└┬┘│ │  │    │    │      │          │
+│  │  │  │ │ │  │    │    │      │          └─ name
+│  │  │  │ │ │  │    │    │      └─ modification time
+│  │  │  │ │ │  │    │    └─ size in bytes
+│  │  │  │ │ │  │    └─ group
+│  │  │  │ │ │  └─ owner
+│  │  │  │ │ └─ hard link count
+│  │  │  │ └─ '.' = has an SELinux context, '+' = has an ACL
+│  │  │  └─ other permissions
+│  │  └─ group permissions
+│  └─ owner permissions
+└─ type: '-' file, 'd' directory, 'l' symlink, 'b' block, 'c' char, 's' socket, 'p' pipe
+```
+
+The `.` versus `+` in position 11 matters: a `+` tells you an ACL is present, which is the first clue in a "diagnose this permission problem" task.
+
+### Creating, copying, moving, deleting
+
+```bash
+touch file.txt                   # create empty, or update mtime
+mkdir dir                        # one level
+mkdir -p /a/b/c/d                # create parents as needed
+mkdir -p /srv/{dev,test,prod}    # brace expansion: three directories at once
+
+cp src dst                       # copy a file
+cp -r srcdir dstdir              # copy a directory, recursively
+cp -p src dst                    # PRESERVE mode, ownership, timestamps
+cp -a srcdir dstdir              # archive: -r plus preserve everything, incl. SELinux
+cp -i src dst                    # prompt before overwrite
+cp file1 file2 file3 /dest/      # many into a directory
+
+mv old new                       # rename
+mv file /other/dir/              # move
+mv -i old new                    # prompt
+
+rm file                          # delete
+rm -f file                       # force, no prompt, no error if absent
+rm -r dir                        # recursive
+rm -rf dir                       # both. Be careful
+rmdir dir                        # only removes EMPTY directories
+```
+
+**`cp -a` versus `cp -r`** is examinable in effect. Plain `cp -r` gives the copies the destination's default ownership and a fresh SELinux context inherited from the parent. `cp -a` preserves the originals. When a task says "copy these files preserving permissions", it means `-a` or `-p`.
+
+There is a related trap with SELinux:
+
+| Command | Resulting SELinux context |
+| --- | --- |
+| `cp file /new/path` | **Inherits from the destination directory** |
+| `cp -a file /new/path` | Preserves the source's context |
+| `mv file /new/path` | **Keeps the original context**, which is often wrong for the new location |
+
+This is why moving a file into `/var/www/html` breaks Apache while copying it works. Covered fully in `27-selinux.md`.
+
+### Brace, tilde, and wildcard expansion
+
+```bash
+touch file{1..5}.txt             # file1.txt ... file5.txt
+touch {a,b,c}.conf               # a.conf b.conf c.conf
+mkdir -p /srv/{web,db}/{conf,data}
+cp file.txt{,.bak}               # copy to file.txt.bak — a very fast backup idiom
+
+echo ~                           # /home/you
+echo ~root                       # /root
+
+ls *.conf                        # any characters
+ls file?.txt                     # exactly one character
+ls file[12].txt                  # one char from the set
+ls file[1-3].txt                 # a range
+ls file[!1].txt                  # NOT 1
+```
+
+`cp file.txt{,.bak}` is worth memorising. Before you edit `/etc/fstab`, `/etc/sudoers`, or `/etc/default/grub`, back it up in one short command.
+
+Wildcards are expanded by the **shell**, not the command. That is why `find . -name *.txt` fails when matching files exist in the current directory, and `find . -name '*.txt'` works.
+
+### Finding files
+
+```bash
+find /etc -name "*.conf"                 # by name, case-sensitive
+find /etc -iname "*.CONF"                # case-insensitive
+find / -type d -name "log"               # directories only
+find /home -type f -size +10M            # larger than 10 MB
+find /home -type f -size -1k             # smaller than 1 KB
+find /var -mtime -7                      # modified in the last 7 days
+find /var -mmin -30                      # modified in the last 30 minutes
+find / -user alice                       # owned by alice
+find / -group devs
+find / -perm 0644                        # exactly
+find / -perm -0644                       # at least these bits
+find / -perm /u+s                        # any of these bits: finds SUID files
+find / -perm -4000 -type f               # SUID, the classic audit query
+find /tmp -type f -name "*.log" -delete
+find /tmp -type f -exec ls -l {} \;      # run a command per result
+find /tmp -type f -exec ls -l {} +       # batch them, much faster
+find /etc -maxdepth 1 -type f            # do not recurse
+find / -nouser -o -nogroup               # orphaned files
+
+locate passwd                            # fast, uses a database
+sudo updatedb                            # refresh that database first
+```
+
+`find` needs `sudo` when searching system paths, or you drown in "Permission denied". Redirect those away when you do not care:
+
+```bash
+find / -name "*.conf" 2>/dev/null
+```
+
+### Getting the shell to work for you
+
+```bash
+history                          # numbered command history
+!123                             # rerun command 123
+!!                               # rerun the last command
+sudo !!                          # rerun the last command with sudo. Very useful
+!$                               # last argument of the previous command
+Ctrl+r                           # reverse search history. USE THIS
+Tab                              # complete
+Tab Tab                          # show all completions
+
+Ctrl+a / Ctrl+e                  # start / end of line
+Ctrl+u                           # delete to start of line
+Ctrl+k                           # delete to end of line
+Ctrl+w                           # delete previous word
+Ctrl+l                           # clear screen
+Ctrl+c                           # kill the running command
+Ctrl+d                           # EOF / logout
+Ctrl+z                           # suspend, then `fg` or `bg`
+```
+
+`Ctrl+r` and `sudo !!` are the two biggest per-minute time savers on a timed hands-on exam. Practise them until they are reflexes.
+
+### Reading files without an editor
+
+```bash
+cat file                         # whole file
+cat -n file                      # with line numbers
+tac file                         # reversed
+less file                        # pager: / to search, n next, q quit, G end, g start
+head file                        # first 10 lines
+head -n 5 file
+tail file                        # last 10 lines
+tail -n 20 file
+tail -f /var/log/messages        # follow. Ctrl+c to stop
+wc -l file                       # line count
+wc -w file                       # word count
+wc -c file                       # byte count
+file /bin/ls                     # what kind of file is this
+stat file                        # inode, size, all three timestamps, perms
+```
+
+`stat` is the tool for "when was this changed" questions, because it shows access, modify, and change times separately.
+
+## Tasks
+
+Do these on `server1`. No notes.
+
+**Task 1.** Create the directory tree `/srv/project/{docs,src,build}` in a single command.
+
+**Task 2.** Inside `/srv/project/docs`, create five files named `report1.txt` through `report5.txt` in a single command.
+
+**Task 3.** Copy `/etc/hosts` to `/srv/project/docs/hosts.bak` preserving its permissions, ownership, and timestamps. Prove they were preserved.
+
+**Task 4.** Find every file under `/etc` whose name ends in `.conf` and that was modified in the last 30 days. Suppress permission errors.
+
+**Task 5.** Find all files on the system with the SUID bit set, and write the list to `/root/suid-files.txt`.
+
+**Task 6.** Report how many lines, words, and bytes are in `/etc/services`.
+
+**Task 7.** Show the details of the `/etc/ssh` directory itself, not its contents, including its SELinux context.
+
+**Task 8.** Create a backup of `/etc/fstab` named `/etc/fstab.bak` using brace expansion, in one short command.
+
+**Task 9.** List the ten most recently modified files in `/var/log`, newest last.
+
+**Task 10.** Find all files under `/home` larger than 1 MB owned by a user other than root, and show them in long format.
+
+**Task 11.** Determine the exact access, modify, and change timestamps of `/etc/passwd`.
+
+**Task 12.** Delete every `.txt` file under `/srv/project` but leave the directory structure intact.
+
+---
+
+## Solutions
+
+**Task 1.**
+
+```bash
+sudo mkdir -p /srv/project/{docs,src,build}
+```
+
+Verify:
+
+```bash
+ls -R /srv/project
+```
+
+`-p` does two things: creates missing parents, and does not error if the target already exists. Always use it.
+
+**Task 2.**
+
+```bash
+sudo touch /srv/project/docs/report{1..5}.txt
+ls /srv/project/docs
+```
+
+`{1..5}` is a sequence expansion. `{a..e}` works for letters, and `{01..10}` zero-pads.
+
+**Task 3.**
+
+```bash
+sudo cp -p /etc/hosts /srv/project/docs/hosts.bak
+```
+
+Verify:
+
+```bash
+ls -l /etc/hosts /srv/project/docs/hosts.bak
+stat -c '%a %U:%G %y' /etc/hosts /srv/project/docs/hosts.bak
+```
+
+Both `stat` lines must match. Without `-p`, the copy gets the current time and your umask-derived permissions. `cp -a` would also work and additionally preserves the SELinux context.
+
+**Task 4.**
+
+```bash
+sudo find /etc -name "*.conf" -mtime -30 2>/dev/null
+```
+
+`-mtime -30` means "less than 30 days ago". `-mtime +30` means "more than 30 days ago". `-mtime 30` means "exactly 30 days ago", which is almost never what you want.
+
+**Task 5.**
+
+```bash
+sudo find / -type f -perm -4000 2>/dev/null | sudo tee /root/suid-files.txt
+```
+
+Verify:
+
+```bash
+sudo wc -l /root/suid-files.txt
+sudo head /root/suid-files.txt
+```
+
+`-perm -4000` means "has at least the SUID bit". `-perm 4000` would mean "has SUID and no other permission bits at all", which matches nothing. The leading `-` is the whole trick, and the same applies to `-perm -2000` for SGID and `-perm -1000` for the sticky bit.
+
+Note `sudo tee` rather than `> /root/...`. The redirection is performed by your shell, which is not root, so `sudo find ... > /root/file` fails with permission denied. This trips people up constantly. See `02-redirection-pipes.md`.
+
+**Task 6.**
+
+```bash
+wc /etc/services
+```
+
+Output order is **lines, words, bytes**. For one at a time, use `wc -l`, `wc -w`, `wc -c`.
+
+**Task 7.**
+
+```bash
+ls -ldZ /etc/ssh
+```
+
+`-d` describes the directory rather than listing it. `-Z` adds the SELinux context. Without `-d` you get every file inside instead.
+
+**Task 8.**
+
+```bash
+sudo cp /etc/fstab{,.bak}
+```
+
+This expands to `cp /etc/fstab /etc/fstab.bak`. Build the habit now: back up every system file before you edit it. On the exam, a mangled `/etc/fstab` with no backup is how a small mistake becomes an unbootable machine.
+
+**Task 9.**
+
+```bash
+ls -ltr /var/log | tail -n 10
+```
+
+`-t` sorts by time newest first, `-r` reverses it so newest ends up last, and `tail -10` takes that end. This is the standard idiom for "what changed most recently".
+
+**Task 10.**
+
+```bash
+sudo find /home -type f -size +1M ! -user root -exec ls -lh {} +
+```
+
+`!` negates the next test. `-size +1M` is "larger than 1 MB". Using `-exec ... +` batches results into as few `ls` invocations as possible, which is much faster than `\;` running one per file.
+
+**Task 11.**
+
+```bash
+stat /etc/passwd
+```
+
+Three timestamps, and knowing which is which is the point:
+
+| Field | Meaning | Changed by |
+| --- | --- | --- |
+| **Access** | Last read | `cat`, `less` |
+| **Modify** | Contents last changed | Editing, appending |
+| **Change** | **Inode** last changed | Editing, **and also** `chmod`, `chown`, renaming |
+
+So `chmod` updates Change but not Modify. That distinction is what "when was this file's permission last altered" questions are testing.
+
+**Task 12.**
+
+```bash
+sudo find /srv/project -type f -name "*.txt" -delete
+```
+
+Verify:
+
+```bash
+find /srv/project
+```
+
+`-type f` is essential. Without it, `-delete` would also try to remove matching directories. Put `-delete` last; `find` applies tests left to right, and `find /srv -delete -name '*.txt'` deletes everything before the name test is ever considered.
+
+---
+
+## Verify
+
+```bash
+ls -R /srv/project
+sudo wc -l /root/suid-files.txt
+ls -l /etc/fstab.bak
+```
+
+## Persistence Check
+
+Nothing in this file needs to survive a reboot; these are filesystem operations that are already on disk. But note two habits that matter for later files:
+
+- Back up config files with `cp file{,.bak}` **before** editing.
+- `sudo command > /root/file` does **not** work. The shell opens the file, not `sudo`. Use `sudo tee`.
+
+## Exam Tips
+
+- **`ls -ld`** for a directory itself. **`ls -lZ`** for SELinux context. **`ls -ltr`** for recent changes.
+- Position 11 of `ls -l`: **`.` means SELinux context, `+` means an ACL exists.** The `+` is your first clue in permission-diagnosis tasks.
+- **`mkdir -p`** always. **`cp -a`** or **`cp -p`** when permissions or ownership must be preserved.
+- **`cp` inherits the destination's SELinux context. `mv` keeps the original's.** This causes real breakage; see `27-selinux.md`.
+- **`cp file{,.bak}`** to back up before editing. Do it every time.
+- `find -perm -4000` needs the leading **`-`** to mean "at least these bits".
+- `-mtime -7` is "within 7 days", `+7` is "older than 7 days".
+- Quote wildcards passed to `find`: **`-name '*.conf'`**, because the shell would otherwise expand them first.
+- `-exec ... +` is much faster than `-exec ... \;`.
+- **`sudo cmd > /root/file` fails.** Use `sudo cmd | sudo tee /root/file`.
+- `stat` shows three timestamps. **`chmod` changes Change time, not Modify time.**
+- **`Ctrl+r`** to search history and **`sudo !!`** to rerun with privilege. These save real minutes.
+- `rmdir` only removes empty directories. Use `rm -r` otherwise.

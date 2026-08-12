@@ -824,7 +824,7 @@ systemctl --failed
 | A 200 MiB LV exists, ext4, mounted at `/recovery` | 5 |
 | **Persistent and mounted after a reboot** | **3** |
 
-**This is the drill that matters most.** If the recovery took more than ten minutes, redo drill 3 in `36.md` until it is automatic. **On the real exam, this is a self-inflicted wound you will need to fix under time pressure.**
+**This is the drill that matters most.** If the recovery took more than ten minutes, redo drill 3 in `36-break-and-fix-drill.md` until it is automatic. **On the real exam, this is a self-inflicted wound you will need to fix under time pressure.**
 
 ---
 

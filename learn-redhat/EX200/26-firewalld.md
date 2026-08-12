@@ -1,0 +1,1153 @@
+# 26. firewalld
+
+**Objective:** Restrict network access using `firewall-cmd` and firewalld.
+
+**Almost every service task on the exam has a hidden firewall requirement.** Configure a web server and the grader will try to reach it from another host. If the firewall blocks port 80, you score nothing for the whole task even though httpd is perfect.
+
+**And the single most common mistake on this entire exam is forgetting `--permanent`.**
+
+## Concept Refresher
+
+### The two configuration sets
+
+firewalld maintains **two separate copies** of its configuration:
+
+```text
+   ┌─────────────────────────┐        ┌──────────────────────────┐
+   │  RUNTIME                │        │  PERMANENT               │
+   │  in memory              │        │  on disk                 │
+   │  active right now       │        │  /etc/firewalld/zones/   │
+   │  LOST on reload/reboot  │        │  loaded at boot          │
+   └───────────┬─────────────┘        └────────────┬─────────────┘
+               │                                   │
+      firewall-cmd --add-...              firewall-cmd --permanent --add-...
+               │                                   │
+               │        ◄── --reload ──────────────┘
+               │            (permanent overwrites runtime)
+               └──── --runtime-to-permanent ──────►
+                       (runtime copied to permanent)
+```
+
+| | Runtime | Permanent |
+| --- | --- | --- |
+| Flag | *(none)* | **`--permanent`** |
+| Active immediately | **Yes** | No |
+| Survives `--reload` | **No** | Yes |
+| Survives reboot | **No** | **Yes** |
+| Stored | Memory | `/etc/firewalld/zones/*.xml` |
+
+**The exam-safe pattern is always two commands:**
+
+```bash
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --reload
+```
+
+The first writes the permanent set; the second makes the permanent set the runtime set. **Doing only the first means it is not active now. Doing only the second (without `--permanent`) means it disappears at boot.**
+
+There is a shorthand, but it is a trap:
+
+```bash
+sudo firewall-cmd --add-service=http                # runtime only
+sudo firewall-cmd --runtime-to-permanent            # now copy EVERYTHING runtime has
+```
+
+`--runtime-to-permanent` copies the entire runtime configuration, including anything else you were experimenting with. **Prefer `--permanent` plus `--reload`.**
+
+### Zones
+
+A zone is a named policy applied to interfaces and source addresses.
+
+| Zone | Default behaviour |
+| --- | --- |
+| `drop` | Drop all incoming, no reply. Outgoing allowed |
+| `block` | Reject all incoming with icmp-host-prohibited |
+| **`public`** | **The default.** Only selected services allowed |
+| `external` | Like public, with masquerading enabled |
+| `dmz` | Limited access, ssh only |
+| `work` | ssh, dhcpv6-client, mdns |
+| `home` | ssh, mdns, samba-client, dhcpv6-client |
+| `internal` | Like home |
+| `trusted` | **Accept everything** |
+
+```bash
+firewall-cmd --get-zones
+firewall-cmd --get-default-zone
+firewall-cmd --get-active-zones
+firewall-cmd --list-all
+firewall-cmd --list-all-zones
+firewall-cmd --zone=public --list-all
+firewall-cmd --get-zone-of-interface=ens160
+```
+
+```bash
+sudo firewall-cmd --set-default-zone=public                        # applies to both sets
+sudo firewall-cmd --permanent --zone=work --change-interface=ens192
+sudo firewall-cmd --permanent --zone=trusted --add-source=192.168.56.0/24
+sudo firewall-cmd --reload
+```
+
+**`--set-default-zone` is the one command that does not need `--permanent`** — it changes runtime and permanent together. Everything else does.
+
+### Services versus ports
+
+```bash
+firewall-cmd --get-services                       # every predefined service
+firewall-cmd --info-service=http
+firewall-cmd --list-services
+firewall-cmd --list-ports
+```
+
+```bash
+# By service name — preferred
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --permanent --add-service=https
+sudo firewall-cmd --permanent --add-service={http,https}
+sudo firewall-cmd --permanent --add-service=nfs --add-service=mountd --add-service=rpc-bind
+
+# By port number
+sudo firewall-cmd --permanent --add-port=8080/tcp
+sudo firewall-cmd --permanent --add-port=5000-5100/udp
+
+sudo firewall-cmd --reload
+```
+
+**Prefer `--add-service` when a named service exists.** A service definition can cover several ports and protocols — `nfs` and `samba` in particular — and using the name means you cannot miss one. Use `--add-port` for non-standard ports like `8080`.
+
+Find the service name for a port:
+
+```bash
+firewall-cmd --get-services | tr ' ' '\n' | grep -i http
+firewall-cmd --info-service=nfs
+grep -rl 2049 /usr/lib/firewalld/services/
+```
+
+```text
+$ firewall-cmd --info-service=nfs
+nfs
+  ports: 2049/tcp
+  protocols:
+  source-ports:
+  modules:
+  destination:
+```
+
+Service definitions are XML in `/usr/lib/firewalld/services/`. Custom ones go in `/etc/firewalld/services/`.
+
+### Removing rules
+
+```bash
+sudo firewall-cmd --permanent --remove-service=http
+sudo firewall-cmd --permanent --remove-port=8080/tcp
+sudo firewall-cmd --permanent --remove-source=192.168.56.0/24
+sudo firewall-cmd --reload
+```
+
+### Rich rules
+
+For anything involving a source address, logging, or rejection:
+
+```bash
+# Allow http from one subnet only
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="192.168.56.0/24" service name="http" accept'
+
+# Reject ssh from one host
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="192.168.56.99/32" service name="ssh" reject'
+
+# Drop everything from a subnet
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="10.0.0.0/8" drop'
+
+# Allow a port from a source, with logging
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="192.168.56.0/24" port port="8080" protocol="tcp" log prefix="8080-in " level="info" accept'
+
+sudo firewall-cmd --reload
+firewall-cmd --list-rich-rules
+sudo firewall-cmd --permanent --remove-rich-rule='...'      # exact same string
+```
+
+The grammar, in order:
+
+```text
+rule [family="ipv4|ipv6"]
+     [source address="..."] [destination address="..."]
+     [service name="..." | port port="..." protocol="tcp|udp" | protocol value="..."]
+     [log [prefix="..."] [level="..."] [limit value="3/m"]]
+     [audit]
+     accept | reject | drop
+```
+
+**`reject` sends an ICMP rejection so the client fails immediately; `drop` sends nothing so the client hangs until it times out.** A task saying "silently discard" means `drop`; "refuse" or "reject" means `reject`.
+
+**Removing a rich rule requires the string to match character for character.** Copy it from `--list-rich-rules` rather than retyping.
+
+### Zone-based source restriction
+
+Often simpler than a rich rule, and easier to get right:
+
+```bash
+# Everything from this subnet is trusted
+sudo firewall-cmd --permanent --zone=trusted --add-source=192.168.56.0/24
+
+# Everything from this subnet is dropped
+sudo firewall-cmd --permanent --zone=drop --add-source=10.0.0.0/8
+sudo firewall-cmd --reload
+firewall-cmd --get-active-zones
+```
+
+```text
+public
+  interfaces: ens160
+trusted
+  sources: 192.168.56.0/24
+```
+
+**Zone matching order: source address first, then interface, then the default zone.** A packet from `192.168.56.5` matches the `trusted` source and never reaches the `public` zone rules. This is why adding a source to `trusted` effectively whitelists a subnet.
+
+### Port forwarding and masquerading
+
+```bash
+sudo firewall-cmd --permanent --add-masquerade
+sudo firewall-cmd --permanent --add-forward-port=port=8080:proto=tcp:toport=80
+sudo firewall-cmd --permanent --add-forward-port=port=8080:proto=tcp:toport=80:toaddr=192.168.56.12
+sudo firewall-cmd --reload
+firewall-cmd --list-forward-ports
+firewall-cmd --query-masquerade
+```
+
+**Forwarding to another host requires masquerade to be enabled.**
+
+### Panic mode
+
+```bash
+sudo firewall-cmd --panic-on           # drop ALL traffic, in and out
+sudo firewall-cmd --panic-off
+firewall-cmd --query-panic
+```
+
+**Never run `--panic-on` over SSH.** It disconnects you instantly and there is no way back except the console.
+
+### Service management
+
+```bash
+sudo systemctl enable --now firewalld
+systemctl status firewalld
+firewall-cmd --state
+firewall-cmd --reload                  # apply permanent, keep connections
+sudo firewall-cmd --complete-reload    # apply permanent, DROP connection state
+```
+
+```text
+$ firewall-cmd --state
+running
+```
+
+**`--reload` keeps established connections; `--complete-reload` breaks them, including your SSH session.** Use `--reload`.
+
+`firewalld` must be **enabled**, not just started, or every rule you wrote is inert after a reboot:
+
+```bash
+systemctl is-enabled firewalld
+systemctl is-active firewalld
+```
+
+### Query and test
+
+```bash
+firewall-cmd --query-service=http
+firewall-cmd --query-port=8080/tcp
+firewall-cmd --permanent --query-service=http     # check the PERMANENT set
+```
+
+Each returns `yes` or `no` and sets an exit status, so they work in scripts.
+
+**Compare the two sets — this is how you catch a missing `--permanent`:**
+
+```bash
+firewall-cmd --list-all                  # runtime
+firewall-cmd --permanent --list-all      # permanent
+diff <(firewall-cmd --list-all) <(sudo firewall-cmd --permanent --list-all)
+```
+
+**If those two differ, something will change at the next reboot.** Make this diff part of your pre-reboot checklist.
+
+Test from the other machine:
+
+```bash
+# on server2
+curl http://server1.lab.example.com
+nc -zv 192.168.56.11 80
+nmap -p 80,443,22 192.168.56.11
+ss -tlnp | grep :80              # on server1: is anything even listening?
+```
+
+**Distinguish "not listening" from "firewalled".** `ss -tlnp` on the server tells you whether the service is bound at all. If nothing is listening, the firewall is not your problem.
+
+### The files
+
+```bash
+sudo ls /etc/firewalld/zones/
+sudo cat /etc/firewalld/zones/public.xml
+ls /usr/lib/firewalld/zones/
+ls /usr/lib/firewalld/services/
+sudo cat /etc/firewalld/firewalld.conf | grep -v '^#'
+```
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<zone>
+  <short>Public</short>
+  <service name="ssh"/>
+  <service name="dhcpv6-client"/>
+  <service name="http"/>
+  <port port="8080" protocol="tcp"/>
+</zone>
+```
+
+**A zone XML file appears in `/etc/firewalld/zones/` only once you modify that zone.** Unmodified zones use the defaults in `/usr/lib/firewalld/zones/`. **If a change you made permanently is not in `/etc/firewalld/zones/`, it is not permanent.**
+
+### nftables
+
+firewalld is a front end. On RHEL 9 and 10 the backend is nftables:
+
+```bash
+sudo nft list ruleset | head -40
+sudo nft list tables
+```
+
+**You configure firewalld, not nftables directly.** Looking at the nftables ruleset is useful for understanding but never for configuring — a hand-written `nft` rule is not persistent and will be wiped by the next firewalld reload.
+
+`iptables` commands still exist as a translation shim but are deprecated. Do not use them.
+
+## Tasks
+
+**Task 1.** Confirm firewalld is installed, running, and enabled, and show the current default zone.
+
+**Task 2.** Display the complete configuration of the active zone, listing services, ports, and interfaces.
+
+**Task 3.** Allow HTTP and HTTPS permanently in the default zone, and make the change active without a reboot.
+
+**Task 4.** Verify your change is present in **both** the runtime and permanent configurations, and locate the file on disk.
+
+**Task 5.** Open TCP port 8080 permanently, then confirm it from another machine.
+
+**Task 6.** Deliberately add a rule without `--permanent`, prove it works, then prove it vanishes on reload.
+
+**Task 7.** Determine which firewalld service name covers NFS, and what ports it includes.
+
+**Task 8.** Allow HTTP only from the `192.168.56.0/24` subnet, and from nowhere else.
+
+**Task 9.** Reject SSH from the single host `192.168.56.99` while leaving it available to everyone else.
+
+**Task 10.** Silently drop all traffic from `10.0.0.0/8`, and explain how this differs from rejecting it.
+
+**Task 11.** Assign the interface `ens192` to the `work` zone permanently.
+
+**Task 12.** Trust everything coming from `192.168.56.0/24` using a zone rather than a rich rule, and explain the zone matching order.
+
+**Task 13.** Forward incoming TCP port 8080 to port 80 on this host.
+
+**Task 14.** Remove the HTTP service and port 8080 from the configuration.
+
+**Task 15.** Log and rate-limit rejected connections to port 3306.
+
+**Task 16.** Diagnose this fault: `httpd` is running and `curl localhost` works, but a browser on another machine cannot connect.
+
+**Task 17.** Write a single command that reveals any difference between your runtime and permanent configuration.
+
+**Task 18.** Verify all firewall configuration survives a reboot.
+
+---
+
+## Solutions
+
+**Task 1.**
+
+```bash
+rpm -q firewalld
+sudo systemctl enable --now firewalld
+systemctl status firewalld
+firewall-cmd --state
+firewall-cmd --get-default-zone
+```
+
+```text
+$ firewall-cmd --state
+running
+$ firewall-cmd --get-default-zone
+public
+```
+
+Confirm both halves of the service state:
+
+```bash
+systemctl is-enabled firewalld
+systemctl is-active firewalld
+```
+
+```text
+enabled
+active
+```
+
+**`is-enabled` is the one that matters for grading.** A firewalld that is running but disabled means every rule you write is inert after the reboot — the zone files exist, but nothing loads them. `enable --now` gives you both.
+
+**Task 2.**
+
+```bash
+firewall-cmd --list-all
+```
+
+```text
+public (active)
+  target: default
+  icmp-block-inversion: no
+  interfaces: ens160
+  sources:
+  services: dhcpv6-client ssh
+  ports:
+  protocols:
+  forward: yes
+  masquerade: no
+  forward-ports:
+  source-ports:
+  icmp-blocks:
+  rich rules:
+```
+
+Reading it: **`(active)` means this zone has an interface or source bound to it.** `services` and `ports` are what is allowed in. An empty `services` list with `target: default` means everything is blocked except what is listed.
+
+```bash
+firewall-cmd --get-active-zones
+firewall-cmd --zone=public --list-all
+firewall-cmd --list-all-zones | less
+firewall-cmd --list-services
+firewall-cmd --list-ports
+```
+
+Note that `ssh` is allowed by default in `public` — which is why you can SSH in at all.
+
+**Task 3.**
+
+```bash
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --permanent --add-service=https
+sudo firewall-cmd --reload
+```
+
+Or in one go:
+
+```bash
+sudo firewall-cmd --permanent --add-service={http,https}
+sudo firewall-cmd --reload
+```
+
+Verify:
+
+```bash
+firewall-cmd --list-services
+```
+
+```text
+dhcpv6-client http https ssh
+```
+
+**This two-command pattern is the whole objective:**
+
+1. `--permanent --add-...` writes to `/etc/firewalld/zones/public.xml`.
+2. `--reload` loads the permanent configuration into the runtime.
+
+Get either one wrong and you lose the marks:
+
+| What you ran | Active now | After reboot |
+| --- | --- | --- |
+| `--add-service=http` | **Yes** | **No** |
+| `--permanent --add-service=http` | **No** | Yes |
+| **both, i.e. `--permanent` then `--reload`** | **Yes** | **Yes** |
+
+**Task 4.**
+
+```bash
+firewall-cmd --list-services                       # runtime
+sudo firewall-cmd --permanent --list-services      # permanent
+```
+
+Both must show `http https`. Query form:
+
+```bash
+firewall-cmd --query-service=http
+sudo firewall-cmd --permanent --query-service=http
+```
+
+```text
+yes
+yes
+```
+
+On disk:
+
+```bash
+sudo cat /etc/firewalld/zones/public.xml
+```
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<zone>
+  <short>Public</short>
+  <description>For use in public areas.</description>
+  <service name="ssh"/>
+  <service name="dhcpv6-client"/>
+  <service name="http"/>
+  <service name="https"/>
+</zone>
+```
+
+**This file is the persistence.** Note that `/etc/firewalld/zones/public.xml` did not exist before your first permanent change — until then, the zone came from `/usr/lib/firewalld/zones/public.xml`. So:
+
+```bash
+sudo ls -l /etc/firewalld/zones/
+```
+
+**If your zone has no file here, you have made no permanent changes to it**, whatever the runtime says.
+
+**Task 5.**
+
+```bash
+sudo firewall-cmd --permanent --add-port=8080/tcp
+sudo firewall-cmd --reload
+firewall-cmd --list-ports
+```
+
+```text
+8080/tcp
+```
+
+Start something listening:
+
+```bash
+sudo dnf install -y nmap-ncat
+sudo nc -l 8080 &
+ss -tlnp | grep 8080
+```
+
+From server2:
+
+```bash
+nc -zv 192.168.56.11 8080
+curl -v telnet://192.168.56.11:8080
+nmap -p 8080 192.168.56.11
+```
+
+```text
+Ncat: Connected to 192.168.56.11:8080.
+```
+
+**Testing from another host is the only test that proves anything.** `curl localhost` goes over loopback, which the firewall does not filter — a loopback test passes even with everything blocked.
+
+Port ranges and udp:
+
+```bash
+sudo firewall-cmd --permanent --add-port=5000-5100/tcp
+sudo firewall-cmd --permanent --add-port=161/udp
+sudo firewall-cmd --reload
+```
+
+**Task 6.**
+
+Runtime only:
+
+```bash
+sudo firewall-cmd --add-service=ftp
+firewall-cmd --list-services
+```
+
+```text
+dhcpv6-client ftp http https ssh
+```
+
+It works. Now look at the permanent set:
+
+```bash
+sudo firewall-cmd --permanent --list-services
+```
+
+```text
+dhcpv6-client http https ssh
+```
+
+**`ftp` is absent.** No reboot needed to lose it:
+
+```bash
+sudo firewall-cmd --reload
+firewall-cmd --list-services
+```
+
+```text
+dhcpv6-client http https ssh
+```
+
+**Gone.** `--reload` replaces the runtime configuration with the permanent one, so any runtime-only rule is discarded.
+
+This is the single most common failure on the RHCSA. The candidate's rule works when they test it, and it is gone when the grader reboots.
+
+Two ways to recover:
+
+```bash
+# Preferred: state it explicitly
+sudo firewall-cmd --permanent --add-service=ftp
+sudo firewall-cmd --reload
+
+# Or promote the entire runtime set
+sudo firewall-cmd --add-service=ftp
+sudo firewall-cmd --runtime-to-permanent
+```
+
+**`--runtime-to-permanent` copies everything currently in the runtime**, including experiments you have forgotten about. Use `--permanent` and `--reload`.
+
+**Task 7.**
+
+```bash
+firewall-cmd --get-services | tr ' ' '\n' | grep -i nfs
+```
+
+```text
+nfs
+nfs3
+```
+
+```bash
+firewall-cmd --info-service=nfs
+firewall-cmd --info-service=nfs3
+firewall-cmd --info-service=mountd
+firewall-cmd --info-service=rpc-bind
+```
+
+```text
+$ firewall-cmd --info-service=nfs
+nfs
+  ports: 2049/tcp
+```
+
+Or read the definitions:
+
+```bash
+ls /usr/lib/firewalld/services/ | grep -i nfs
+cat /usr/lib/firewalld/services/nfs.xml
+grep -rl 2049 /usr/lib/firewalld/services/
+```
+
+For an NFSv4-only server, `nfs` alone is enough. **For NFSv3 you also need `mountd` and `rpc-bind`:**
+
+```bash
+sudo firewall-cmd --permanent --add-service={nfs,mountd,rpc-bind}
+sudo firewall-cmd --reload
+```
+
+**Use the service name rather than the port.** A service definition can cover several ports — `samba` is three, NFSv3 needs three separate services — and naming them means you cannot forget one. Find the name by searching `--get-services`.
+
+**Task 8.**
+
+Remove the blanket rule first, then add a source-restricted one:
+
+```bash
+sudo firewall-cmd --permanent --remove-service=http
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="192.168.56.0/24" service name="http" accept'
+sudo firewall-cmd --reload
+```
+
+Verify:
+
+```bash
+firewall-cmd --list-services            # http must NOT be here
+firewall-cmd --list-rich-rules
+```
+
+```text
+rule family="ipv4" source address="192.168.56.0/24" service name="http" accept
+```
+
+**Removing the plain `--add-service=http` is essential.** A blanket allow and a source-restricted allow together mean everyone gets in, and the task is not satisfied. Check both lists.
+
+Test:
+
+```bash
+# From 192.168.56.12 — should work
+curl http://192.168.56.11
+
+# From any other address — should fail
+```
+
+**Task 9.**
+
+```bash
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="192.168.56.99/32" service name="ssh" reject'
+sudo firewall-cmd --reload
+firewall-cmd --list-rich-rules
+```
+
+`ssh` stays in the services list so everyone else can still connect:
+
+```bash
+firewall-cmd --list-services            # ssh still present
+```
+
+**Rich rules are evaluated before the zone's service list**, so the reject for `.99` wins for that host while the general `ssh` allow covers everyone else.
+
+**`/32` is the single-host prefix.** You can omit it, but being explicit avoids ambiguity.
+
+Remove it later — **the string must match exactly**:
+
+```bash
+firewall-cmd --list-rich-rules                    # copy the string from here
+sudo firewall-cmd --permanent --remove-rich-rule='rule family="ipv4" source address="192.168.56.99/32" service name="ssh" reject'
+sudo firewall-cmd --reload
+```
+
+**Task 10.**
+
+```bash
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="10.0.0.0/8" drop'
+sudo firewall-cmd --reload
+firewall-cmd --list-rich-rules
+```
+
+| Action | Response sent | Client sees |
+| --- | --- | --- |
+| `accept` | Normal | Connection succeeds |
+| **`reject`** | **ICMP port/host unreachable** | **Immediate "Connection refused"** |
+| **`drop`** | **Nothing at all** | **Hangs, then times out** |
+
+**"Silently discard" or "ignore" in a task means `drop`. "Refuse" or "reject" means `reject`.** The observable difference:
+
+```bash
+# reject
+$ curl http://192.168.56.11
+curl: (7) Failed to connect: Connection refused        # instant
+
+# drop
+$ curl http://192.168.56.11
+curl: (28) Connection timed out after 130002 ms        # hangs
+```
+
+`drop` hides the host from scanners, which is why it is preferred for hostile networks; `reject` is friendlier because clients fail fast.
+
+The zone-based equivalent, often simpler:
+
+```bash
+sudo firewall-cmd --permanent --zone=drop --add-source=10.0.0.0/8
+sudo firewall-cmd --reload
+```
+
+**Task 11.**
+
+```bash
+sudo firewall-cmd --permanent --zone=work --change-interface=ens192
+sudo firewall-cmd --reload
+```
+
+Verify:
+
+```bash
+firewall-cmd --get-active-zones
+firewall-cmd --get-zone-of-interface=ens192
+firewall-cmd --zone=work --list-all
+```
+
+```text
+public
+  interfaces: ens160
+work
+  interfaces: ens192
+```
+
+**`--change-interface` moves the interface**, removing it from its previous zone. `--add-interface` fails if it is already assigned elsewhere, so `--change-interface` is the safer verb.
+
+NetworkManager also stores a zone on the connection profile, and **the two must agree**:
+
+```bash
+sudo nmcli con mod static-lab connection.zone work
+sudo nmcli con up static-lab
+firewall-cmd --get-zone-of-interface=ens192
+```
+
+**This is a real trap.** If you set the zone with `firewall-cmd` but the connection profile says something else, NetworkManager reassigns the interface when the connection next activates — including at boot. **Setting `connection.zone` on the profile is the more robust answer**, and doing both is safest.
+
+**Task 12.**
+
+```bash
+sudo firewall-cmd --permanent --zone=trusted --add-source=192.168.56.0/24
+sudo firewall-cmd --reload
+firewall-cmd --get-active-zones
+firewall-cmd --zone=trusted --list-all
+```
+
+```text
+public
+  interfaces: ens160
+trusted
+  sources: 192.168.56.0/24
+```
+
+```text
+trusted (active)
+  target: ACCEPT
+  sources: 192.168.56.0/24
+```
+
+**`target: ACCEPT` means everything from that subnet is allowed, on every port.**
+
+The matching order is what makes this work:
+
+```text
+  incoming packet
+        │
+        ▼
+  1. Does the SOURCE ADDRESS match a zone's source list?  ──yes──► use that zone
+        │ no
+        ▼
+  2. Does the INTERFACE belong to a zone?                 ──yes──► use that zone
+        │ no
+        ▼
+  3. Use the DEFAULT zone
+```
+
+**Source matching wins over interface matching.** A packet from `192.168.56.5` arriving on `ens160` matches the `trusted` source and is accepted, without ever being evaluated against `public`'s service list.
+
+Consequences:
+
+- Adding a subnet to `trusted` whitelists it entirely — far broader than a rich rule for one service. Use it only when a task genuinely means "trust this network".
+- Adding a subnet to `drop` blacklists it entirely, overriding any service allow.
+- A source can only be in one zone at a time.
+
+| Approach | Scope | Use when |
+| --- | --- | --- |
+| `--zone=trusted --add-source=` | **All ports** | "Trust this network completely" |
+| Rich rule with `source address` + `service name` | **One service** | "Allow http only from this subnet" |
+| `--add-service=` | All sources | "Allow http" |
+
+**Task 13.**
+
+```bash
+sudo firewall-cmd --permanent --add-forward-port=port=8080:proto=tcp:toport=80
+sudo firewall-cmd --reload
+firewall-cmd --list-forward-ports
+```
+
+```text
+port=8080:proto=tcp:toport=80:toaddr=
+```
+
+Test:
+
+```bash
+sudo systemctl enable --now httpd
+curl http://192.168.56.11:8080          # from server2
+```
+
+To forward to a different host, masquerade is required:
+
+```bash
+sudo firewall-cmd --permanent --add-masquerade
+sudo firewall-cmd --permanent --add-forward-port=port=8080:proto=tcp:toport=80:toaddr=192.168.56.12
+sudo firewall-cmd --reload
+firewall-cmd --query-masquerade
+```
+
+```text
+yes
+```
+
+**Forwarding to another address without masquerade silently does not work** — the reply packets have the wrong source address and the client discards them.
+
+Note the syntax is one colon-separated string with no spaces: `port=8080:proto=tcp:toport=80`.
+
+**Task 14.**
+
+```bash
+sudo firewall-cmd --permanent --remove-service=http
+sudo firewall-cmd --permanent --remove-port=8080/tcp
+sudo firewall-cmd --reload
+```
+
+Verify:
+
+```bash
+firewall-cmd --list-services
+firewall-cmd --list-ports
+firewall-cmd --query-service=http                 # no
+sudo firewall-cmd --permanent --query-service=http # no
+sudo cat /etc/firewalld/zones/public.xml
+```
+
+**`--permanent` is just as necessary for removal as for addition.** Removing a rule from the runtime only means it reappears at the next reboot — the opposite failure, equally wrong.
+
+Other removals:
+
+```bash
+sudo firewall-cmd --permanent --remove-source=192.168.56.0/24 --zone=trusted
+sudo firewall-cmd --permanent --remove-rich-rule='rule ...'
+sudo firewall-cmd --permanent --remove-masquerade
+sudo firewall-cmd --permanent --remove-forward-port=port=8080:proto=tcp:toport=80
+sudo firewall-cmd --reload
+```
+
+To discard all customisation of a zone:
+
+```bash
+sudo firewall-cmd --permanent --zone=public --set-target=default
+sudo rm /etc/firewalld/zones/public.xml           # reverts to /usr/lib defaults
+sudo firewall-cmd --reload
+```
+
+**Task 15.**
+
+```bash
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" port port="3306" protocol="tcp" log prefix="mysql-deny " level="notice" limit value="3/m" reject'
+sudo firewall-cmd --reload
+firewall-cmd --list-rich-rules
+```
+
+Watch the log:
+
+```bash
+sudo journalctl -f | grep mysql-deny
+sudo journalctl -k | grep mysql-deny
+sudo dmesg | grep mysql-deny
+```
+
+```text
+kernel: mysql-deny IN=ens160 OUT= SRC=192.168.56.12 DST=192.168.56.11 PROTO=TCP SPT=54221 DPT=3306
+```
+
+**`limit value="3/m"` caps logging to three messages a minute**, which matters because an unlimited log rule under a port scan floods the journal and can fill `/var`. Accepted units are `/s`, `/m`, `/h`, `/d`.
+
+Levels are `emerg`, `alert`, `crit`, `error`, `warning`, `notice`, `info`, `debug`. **The `prefix` is what makes the entries greppable** — always set one.
+
+**Task 16.**
+
+Localhost works, remote does not. Work through it in order:
+
+```bash
+# 1. Is the service actually listening, and on what address?
+ss -tlnp | grep :80
+```
+
+```text
+LISTEN 0 511 *:80 *:*
+```
+
+`*:80` means all interfaces. **If it showed `127.0.0.1:80`, the service is bound to loopback only and the firewall is irrelevant** — fix the application configuration instead.
+
+```bash
+# 2. Is firewalld running?
+firewall-cmd --state
+
+# 3. Is http allowed in the RUNTIME configuration?
+firewall-cmd --list-services
+firewall-cmd --query-service=http
+```
+
+```text
+dhcpv6-client ssh
+no
+```
+
+**There it is.** But check the permanent set too, because the failure mode differs:
+
+```bash
+sudo firewall-cmd --permanent --list-services
+```
+
+| Runtime | Permanent | Diagnosis |
+| --- | --- | --- |
+| no | no | **Never added.** Add it permanently and reload |
+| no | yes | Added permanently but **never reloaded** |
+| yes | no | Works now, **will break at the next reboot** |
+| yes | yes | Firewall is fine — look elsewhere |
+
+Fix:
+
+```bash
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --reload
+firewall-cmd --query-service=http
+```
+
+Then re-test **from the other machine**:
+
+```bash
+curl -sI http://192.168.56.11
+```
+
+If it still fails, continue down the list:
+
+```bash
+# 4. Which zone is the interface in, and does that zone allow http?
+firewall-cmd --get-active-zones
+firewall-cmd --get-zone-of-interface=ens160
+firewall-cmd --zone=<that zone> --list-services
+
+# 5. Is a rich rule or a drop-zone source overriding the allow?
+firewall-cmd --list-rich-rules
+firewall-cmd --zone=drop --list-sources
+
+# 6. Is SELinux blocking a non-standard port? (see 27-selinux.md)
+sudo ausearch -m AVC -ts recent
+semanage port -l | grep http_port_t
+
+# 7. Is it a routing problem rather than a firewall one?
+ping -c2 192.168.56.11
+```
+
+**The generic checklist for "service works locally but not remotely":**
+
+1. `ss -tlnp` — is it listening, and on `*` rather than `127.0.0.1`?
+2. `firewall-cmd --list-all` — is the port or service allowed?
+3. `firewall-cmd --permanent --list-all` — will it still be allowed after a reboot?
+4. `ausearch -m AVC` — is SELinux denying it?
+5. `ping` — is there a network path at all?
+
+**On the exam, assume every service task needs a firewall rule.** Make `--permanent --add-service` part of your muscle memory for httpd, nfs, chronyd-as-server, and any custom port.
+
+**Task 17.**
+
+```bash
+diff <(sudo firewall-cmd --list-all) <(sudo firewall-cmd --permanent --list-all)
+```
+
+No output means the two sets agree and nothing will change at the next reboot. Output means trouble:
+
+```text
+6c6
+<   services: dhcpv6-client ftp http ssh
+>   services: dhcpv6-client http ssh
+```
+
+The `<` line is runtime, the `>` line is permanent. **`ftp` is in the runtime only, so it disappears at the next reload or reboot.**
+
+Across all zones:
+
+```bash
+diff <(sudo firewall-cmd --list-all-zones) <(sudo firewall-cmd --permanent --list-all-zones)
+```
+
+**Put this in your pre-reboot checklist.** It is the single highest-value firewall check on the exam, because it catches the missing-`--permanent` error that costs more marks than anything else.
+
+Resolve any difference in the direction you intended:
+
+```bash
+sudo firewall-cmd --permanent --add-service=ftp     # keep it
+sudo firewall-cmd --reload
+# or
+sudo firewall-cmd --remove-service=ftp              # drop it
+```
+
+**Task 18.**
+
+Before the reboot:
+
+```bash
+systemctl is-enabled firewalld
+systemctl is-active firewalld
+sudo firewall-cmd --permanent --list-all
+diff <(sudo firewall-cmd --list-all) <(sudo firewall-cmd --permanent --list-all)
+sudo ls -l /etc/firewalld/zones/
+firewall-cmd --get-default-zone
+```
+
+All four must hold:
+
+- firewalld is **enabled**.
+- The permanent configuration contains everything the tasks asked for.
+- **The runtime/permanent diff is empty.**
+- A zone XML file exists in `/etc/firewalld/zones/` for each zone you changed.
+
+```bash
+sudo reboot
+```
+
+After the reboot:
+
+```bash
+firewall-cmd --state
+firewall-cmd --get-default-zone
+firewall-cmd --list-all
+firewall-cmd --list-rich-rules
+firewall-cmd --get-active-zones
+```
+
+And the real test, from server2:
+
+```bash
+curl -sI http://192.168.56.11
+nc -zv 192.168.56.11 8080
+```
+
+**Reachability from the other host is the only verification that means anything**, because that is how the grader tests it.
+
+---
+
+## Verify
+
+```bash
+firewall-cmd --state
+systemctl is-enabled firewalld
+firewall-cmd --get-default-zone
+firewall-cmd --get-active-zones
+firewall-cmd --list-all
+sudo firewall-cmd --permanent --list-all
+diff <(sudo firewall-cmd --list-all) <(sudo firewall-cmd --permanent --list-all)
+firewall-cmd --list-services
+firewall-cmd --list-ports
+firewall-cmd --list-rich-rules
+firewall-cmd --query-service=http
+sudo ls -l /etc/firewalld/zones/
+sudo cat /etc/firewalld/zones/public.xml
+ss -tlnp
+```
+
+## Persistence Check
+
+| Change | Persistent form | Also required |
+| --- | --- | --- |
+| Service allowed | **`--permanent --add-service=`** | **`--reload`** |
+| Port opened | **`--permanent --add-port=`** | **`--reload`** |
+| Rich rule | **`--permanent --add-rich-rule=`** | **`--reload`** |
+| Source in a zone | **`--permanent --zone=X --add-source=`** | **`--reload`** |
+| Interface in a zone | `--permanent --change-interface=` | **plus `nmcli con mod ... connection.zone`** |
+| Default zone | `--set-default-zone=` | Affects both sets already |
+| Masquerade / forward | **`--permanent --add-masquerade`** | **`--reload`** |
+| firewalld itself | **`systemctl enable --now firewalld`** | — |
+| Any **removal** | **`--permanent --remove-...`** | **`--reload`** |
+
+**The rule is absolute: every `firewall-cmd` change except `--set-default-zone` needs `--permanent`, and then a `--reload` to become active.**
+
+```bash
+# The three-line pre-reboot firewall check
+systemctl is-enabled firewalld
+diff <(sudo firewall-cmd --list-all) <(sudo firewall-cmd --permanent --list-all)
+sudo firewall-cmd --permanent --list-all
+```
+
+An empty diff and an enabled service mean the firewall will be exactly the same after the reboot.
+
+## Exam Tips
+
+- **`--permanent` then `--reload`. Always both.** This is the most-failed detail on the RHCSA.
+- **`firewalld` must be `enable`d, not just started.** `systemctl enable --now firewalld`.
+- **Assume every service task has a firewall requirement.** httpd, NFS, a custom port — the grader tests from another host.
+- **Prefer `--add-service=NAME` over `--add-port`.** A service definition can cover several ports; NFSv3 needs `nfs`, `mountd`, and `rpc-bind`.
+- **Find a service name with `firewall-cmd --get-services | tr ' ' '\n' | grep -i X`** and inspect it with `--info-service=X`.
+- **`diff <(firewall-cmd --list-all) <(firewall-cmd --permanent --list-all)`** catches a missing `--permanent`. Run it before every reboot.
+- **A zone XML file appears in `/etc/firewalld/zones/` only after you make a permanent change.** No file means no permanent change.
+- **Removing a rule needs `--permanent` too**, or the rule returns after a reboot.
+- **`reject` fails the client immediately; `drop` makes it hang.** "Silently discard" means `drop`.
+- **Rich rules are for source-restricted, logged, or rejected traffic.** Removal requires the string to match exactly — copy it from `--list-rich-rules`.
+- **Remove the blanket `--add-service` when adding a source-restricted rich rule**, or everyone still gets in.
+- **Zone matching order: source, then interface, then default zone.** A source in `trusted` bypasses the default zone entirely.
+- **Set the zone on the NetworkManager profile too** (`nmcli con mod ... connection.zone work`), or NetworkManager reassigns the interface at boot.
+- **`--set-default-zone` is the one command that changes runtime and permanent together.**
+- **`--reload` preserves connections; `--complete-reload` drops them.** Use `--reload`.
+- **Never run `--panic-on` over SSH.**
+- **Test from the other machine.** `curl localhost` bypasses the firewall and proves nothing.
+- **`ss -tlnp` first.** If the service is bound to `127.0.0.1`, the firewall is not the problem.
+- **Configure firewalld, never `nft` or `iptables` directly.** Hand-written nftables rules are not persistent.

@@ -2,7 +2,7 @@
 
 Three objectives — addresses, name resolution, and firewalld — plus "configure network services to start automatically at boot". Networking is also the domain where a mistake can disconnect you from your own exam session, so the order in which you do things matters.
 
-Step-by-step tasks are in `24.md`, `25.md`, and `26.md`.
+Step-by-step tasks are in `24-network-nmcli.md`, `25-hostnames-dns.md`, and `26-firewalld.md`.
 
 ---
 

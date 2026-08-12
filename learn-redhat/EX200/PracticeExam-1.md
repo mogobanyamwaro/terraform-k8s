@@ -2,7 +2,7 @@
 
 **18 tasks. 3 hours. 300 points. Pass mark 210 (70%).**
 
-The first of three. This one covers the objective spread evenly and is deliberately close to the real exam in difficulty. Do it after you have worked through `01.md` to `35.md` at least once.
+The first of three. This one covers the objective spread evenly and is deliberately close to the real exam in difficulty. Do it after you have worked through `01-shell-fundamentals.md` to `35-containers-systemd.md` at least once.
 
 ---
 
@@ -265,7 +265,7 @@ On **server1**:
 **Reboot both machines and verify everything before reading on.**
 
 ```bash
-sudo /usr/local/bin/precheck.sh        # if you created it from 36.md
+sudo /usr/local/bin/precheck.sh        # if you created it from 36-break-and-fix-drill.md
 sudo findmnt --verify && sudo mount -a
 sudo reboot
 ```
