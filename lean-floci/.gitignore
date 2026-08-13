@@ -1,0 +1,8 @@
+# Runtime data persisted by Floci emulators
+floci-ui/data/
+
+# Node / Bun build artifacts (if developing UI locally)
+node_modules/
+dist/
+.env
+packages/api/.env
