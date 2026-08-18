@@ -349,6 +349,179 @@ Check Node Firewall?
 ```
 
 ---
+Absolutely. Let's forget the complicated terminology for a moment.
+
+Imagine you have **one Kubernetes Service and two Pods**:
+
+```text
+                    Service
+                my-app:80
+               10.96.0.50
+                    |
+             ??? Which Pod?
+              /           \
+             /             \
+        Pod A              Pod B
+     10.42.1.10         10.42.2.20
+```
+
+You run:
+
+```bash
+curl http://10.96.0.50
+```
+
+Kubernetes needs to turn that into either:
+
+```text
+10.96.0.50 → 10.42.1.10
+```
+
+or:
+
+```text
+10.96.0.50 → 10.42.2.20
+```
+
+## Now the three things
+
+### 1. kube-proxy = the Kubernetes worker
+
+kube-proxy looks at the Service:
+
+> "Oh, `10.96.0.50` belongs to these two Pods."
+
+It then tells the Linux networking system:
+
+> "When traffic comes to `10.96.0.50`, send it to one of these Pods."
+
+So:
+
+```text
+Kubernetes
+   │
+   ▼
+kube-proxy
+   │
+   │ "Create rules for this Service"
+   ▼
+Linux networking
+```
+
+---
+
+### 2. iptables = the actual traffic rules
+
+iptables is what Linux uses to process the packets.
+
+So when you do:
+
+```bash
+curl 10.96.0.50
+```
+
+the packet reaches the node:
+
+```text
+Packet
+  │
+  ▼
+iptables
+  │
+  ├──→ Pod A
+  │
+  └──→ Pod B
+```
+
+**kube-proxy created/configured the rules.
+iptables processes the traffic using those rules.**
+
+---
+
+### 3. eBPF = another way to process the traffic
+
+Instead of using iptables:
+
+```text
+Packet
+   │
+   ▼
+iptables
+   │
+   ▼
+Pod
+```
+
+an eBPF-based system such as Cilium can process it:
+
+```text
+Packet
+   │
+   ▼
+eBPF
+   │
+   ▼
+Pod
+```
+
+So eBPF can do the job **without relying on kube-proxy + iptables for Service routing**.
+
+---
+
+# The simplest possible picture
+
+### Traditional Kubernetes
+
+```text
+You
+ │
+ │ curl Service
+ ▼
+Service IP
+ │
+ ▼
+kube-proxy
+ │
+ │ creates/maintains rules
+ ▼
+iptables
+ │
+ ▼
+Pod
+```
+
+### eBPF-based Kubernetes
+
+```text
+You
+ │
+ │ curl Service
+ ▼
+Service IP
+ │
+ ▼
+eBPF
+ │
+ ▼
+Pod
+```
+
+That's it. 😄
+
+### Remember this
+
+**kube-proxy is not the same thing as iptables.**
+
+Think:
+
+> **kube-proxy = Kubernetes component that manages Service routing rules**
+
+> **iptables = Linux mechanism that can enforce those rules**
+
+> **eBPF = another Linux mechanism that can perform networking directly in the kernel**
+
+And this is why when you're troubleshooting a Service, you might inspect **kube-proxy**, and then inspect **iptables/nftables/IPVS** to see what kube-proxy actually programmed.
+---
 
 ## QUICK FIX COMMANDS CHEATSHEET
 
