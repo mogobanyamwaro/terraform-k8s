@@ -115,7 +115,7 @@ Use cases: CI on Kubernetes, ETL/ML pipelines, batch, infra automation (resource
 
 ## Hands-on
 
-Submit the hello-world example from `Lab-Setup.md`. `argo list` / `kubectl get wf -n argo`.
+Submit the hello-world example from `lab-setup.md`. `argo list` / `kubectl get wf -n argo`.
 
 ## Exam tips
 

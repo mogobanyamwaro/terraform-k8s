@@ -379,8 +379,8 @@ D. Open book argo docs
 41B 42B 43B 44B 45B 46B 47B 48B 49B 50B  
 51B 52B 53B 54B 55B 56B 57B 58B 59B 60B  
 
-Missed 1–22 → `01.md`–`08.md`, `Workflows.md`.  
-Missed 23–42 → `09.md`–`15.md`, `ArgoCD.md`.  
-Missed 43–53 → `16.md`–`19.md`, `Rollouts.md`.  
-Missed 54–60 → `20.md`–`22.md`, `Events.md`.  
-Tool mix-ups → `WhichTool.md`, `Integration.md`.
+Missed 1–22 → `01-workflows-fundamentals.md`–`08-data-processing-jobs.md`, `workflows.md`.  
+Missed 23–42 → `09-argocd-fundamentals.md`–`15-applicationset-appproject.md`, `argocd.md`.  
+Missed 43–53 → `16-rollouts-fundamentals.md`–`19-analysistemplate.md`, `rollouts.md`.  
+Missed 54–60 → `20-events-fundamentals.md`–`22-sensor-triggers.md`, `events.md`.  
+Tool mix-ups → `which-tool.md`, `integration.md`.

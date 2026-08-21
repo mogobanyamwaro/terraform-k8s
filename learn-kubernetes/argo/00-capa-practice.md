@@ -48,10 +48,10 @@ Study CGOA for GitOps vocabulary. Study **this folder** for Argo CRDs, component
 
 | Domain | Weight | Approx of 60 | Files |
 | --- | ---: | ---: | --- |
-| **Argo Workflows** | **36%** | ~22 | `01.md` – `08.md` |
-| **Argo CD** | **34%** | ~20 | `09.md` – `15.md` |
-| Argo Rollouts | 18% | ~11 | `16.md` – `19.md` |
-| Argo Events | 12% | ~7 | `20.md` – `22.md` |
+| **Argo Workflows** | **36%** | ~22 | `01-workflows-fundamentals.md` – `08-data-processing-jobs.md` |
+| **Argo CD** | **34%** | ~20 | `09-argocd-fundamentals.md` – `15-applicationset-appproject.md` |
+| Argo Rollouts | 18% | ~11 | `16-rollouts-fundamentals.md` – `19-analysistemplate.md` |
+| Argo Events | 12% | ~7 | `20-events-fundamentals.md` – `22-sensor-triggers.md` |
 
 Workflows + CD = **70%**. Do not skip Rollouts or Events; 18% + 12% is still 18 questions.
 
@@ -97,34 +97,34 @@ Workflows + CD = **70%**. Do not skip Rollouts or Events; 18% + 12% is still 18 
 
 | File | Covers |
 | --- | --- |
-| `WhichTool.md` | When to use Workflows vs CD vs Rollouts vs Events |
-| `Workflows.md` | Spec, templates, DAG, artifacts, CronWorkflow |
-| `ArgoCD.md` | Components, Application, sync, projects |
-| `Rollouts.md` | Blue-green, canary, analysis |
-| `Events.md` | EventSource, EventBus, Sensor, Trigger |
-| `Integration.md` | Events→Workflows, CD+Rollouts, GitOps of Workflows |
+| `which-tool.md` | When to use Workflows vs CD vs Rollouts vs Events |
+| `workflows.md` | Spec, templates, DAG, artifacts, CronWorkflow |
+| `argocd.md` | Components, Application, sync, projects |
+| `rollouts.md` | Blue-green, canary, analysis |
+| `events.md` | EventSource, EventBus, Sensor, Trigger |
+| `integration.md` | Events→Workflows, CD+Rollouts, GitOps of Workflows |
 
 ## Practice Assets
 
 | File | Use |
 | --- | --- |
-| `Lab-Setup.md` | kind + the four Argo installs |
-| `Flashcards.md` | Rapid recall |
-| `CheatSheet.md` | Night-before page |
-| `Pitfalls.md` | Tool mix-ups, template vs WorkflowTemplate |
-| `MockExam-1.md` | 60 questions, weighted |
-| `MockExam-2.md` | 60 harder questions |
+| `lab-setup.md` | kind + the four Argo installs |
+| `flashcards.md` | Rapid recall |
+| `cheat-sheet.md` | Night-before page |
+| `pitfalls.md` | Tool mix-ups, template vs WorkflowTemplate |
+| `mock-exam-1.md` | 60 questions, weighted |
+| `mock-exam-2.md` | 60 harder questions |
 
 ## Recommended Study Order
 
-1. `WhichTool.md`. If you cannot pick the tool, you fail easy questions.
-2. `01.md`–`08.md` plus `Workflows.md`. **36%.**
-3. `09.md`–`15.md` plus `ArgoCD.md`. **34%.**
-4. `16.md`–`19.md` plus `Rollouts.md`.
-5. `20.md`–`22.md` plus `Events.md`, `Integration.md`.
-6. `Lab-Setup.md` once so CRDs are not abstract.
-7. `MockExam-1.md` timed, then `MockExam-2.md`.
-8. `Flashcards.md`, `CheatSheet.md`, `Pitfalls.md`.
+1. `which-tool.md`. If you cannot pick the tool, you fail easy questions.
+2. `01-workflows-fundamentals.md`–`08-data-processing-jobs.md` plus `workflows.md`. **36%.**
+3. `09-argocd-fundamentals.md`–`15-applicationset-appproject.md` plus `argocd.md`. **34%.**
+4. `16-rollouts-fundamentals.md`–`19-analysistemplate.md` plus `rollouts.md`.
+5. `20-events-fundamentals.md`–`22-sensor-triggers.md` plus `events.md`, `integration.md`.
+6. `lab-setup.md` once so CRDs are not abstract.
+7. `mock-exam-1.md` timed, then `mock-exam-2.md`.
+8. `flashcards.md`, `cheat-sheet.md`, `pitfalls.md`.
 
 ## The Four Tools (memorise in one line each)
 

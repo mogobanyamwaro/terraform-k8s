@@ -375,5 +375,5 @@ D. Prune
 41B 42B 43B 44B 45B 46B 47B 48B 49B 50B  
 51B 52B 53B 54B 55B 56B 57B 58B 59B 60B  
 
-Missed “which tool” → `WhichTool.md`, `Integration.md`.  
+Missed “which tool” → `which-tool.md`, `integration.md`.  
 Workflows YAML → `01–08`. CD → `09–15`. Rollouts → `16–19`. Events → `20–22`.
