@@ -371,6 +371,13 @@ helm get values web -n exercise-13
 
 ## Additional Helm Commands for Exam
 
+**see the rendered output**
+
+```bash
+
+helm template myapp ./mychat
+```
+
 **Uninstall a release:**
 
 ```bash
