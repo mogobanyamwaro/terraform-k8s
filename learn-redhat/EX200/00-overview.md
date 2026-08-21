@@ -182,14 +182,20 @@ Red Hat does not publish per-domain weights for EX200. The task counts below are
 
 Because EX200 is hands-on, these are **not** multiple-choice questions. Each file gives:
 
-- **Concept refresher** — the minimum you must understand, not a textbook chapter.
-- **Tasks** — worded the way the exam words them. Terse, specific, no hints.
+- **Before you start** — lab requirement and how to work through the file.
+- **Follow along** — one command at a time, on your VM, with expected output. **Do this first if you are new to RHEL.** This is how you build muscle memory without drowning in flags upfront.
+- **Practice tasks** — worded the way the exam words them. Terse and specific; hints point back to the follow-along steps, not the full answer.
 - **Solutions** — the full command sequence, why each step exists, and what the common wrong turn is.
 - **Verify** — how to prove to yourself the task is actually done.
+- **Quick reference** — flags, tables, and patterns for review **after** you have typed them once. Not a front-to-back read.
 - **Persistence check** — what specifically must survive the reboot, and how to confirm it.
 - **Exam tips** — the memory hooks and traps.
 
-**Do the tasks before reading the solutions.** Reading a solution feels like learning and is not. You are being graded on typing speed and muscle memory, not recognition.
+**Study order within each file:** Follow Along → Practice Tasks → Solutions only if stuck → Quick Reference for review.
+
+**Do the practice tasks before reading the solutions.** Reading a solution feels like learning and is not. You are being graded on typing speed and muscle memory, not recognition.
+
+Files still being converted to this layout start with the old **Concept refresher** block at the top. Treat that as quick reference and skip to **Tasks** only after you have lab time — or wait for the follow-along section to land. `03-grep-regex.md` is the template.
 
 ## Recommended Study Order
 
