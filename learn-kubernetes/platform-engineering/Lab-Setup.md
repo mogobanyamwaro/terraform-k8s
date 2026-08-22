@@ -12,7 +12,7 @@ Sketch (pick any two; do not install the universe):
 
 | Capability | Example install |
 | --- | --- |
-| GitOps CD | Argo CD or Flux (see `argo/Lab-Setup.md` / `gitops/Lab-Setup.md`) |
+| GitOps CD | Argo CD or Flux (see `argo/lab-setup.md` / `gitops/Lab-Setup.md`) |
 | Policy | Kyverno or Gatekeeper ConstraintTemplate |
 | Compose infra | Crossplane or a sample Operator CRD |
 | Portal | Backstage local (heavy) **or** just a Git `catalog-info.yaml` + a Helm “golden path” chart |

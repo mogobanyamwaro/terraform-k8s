@@ -51,21 +51,21 @@ kubectl explain validatingadmissionpolicy.spec
 
 ## Practice Order
 
-1. `01.md` to `05.md`: Cluster setup and network segmentation
-2. `06.md` to `11.md`: Cluster hardening
-3. `12.md` to `17.md`: System hardening
-4. `18.md` to `23.md`: Workload and microservice security
-5. `24.md` to `28.md`: Supply chain security
-6. `29.md` to `31.md`: Monitoring, logging, and runtime security
+1. `01-default-deny-networkpolicy.md` to `05-kube-bench.md`: Cluster setup and network segmentation
+2. `06-least-privilege-rbac.md` to `11-remove-cluster-admin.md`: Cluster hardening
+3. `12-kubelet-hardening.md` to `17-remove-hostpath-runtime-socket.md`: System hardening
+4. `18-pod-security-standards.md` to `23-validatingadmissionpolicy.md`: Workload and microservice security
+5. `24-trivy-image-scan.md` to `28-deny-latest-tag.md`: Supply chain security
+6. `29-falco-alert.md` to `31-contain-compromised-workload.md`: Monitoring, logging, and runtime security
 
 Named topic files are deeper cheat sheets for common CKS pressure points:
 
-- `AppArmor.md`
-- `Audit.md`
-- `Falco.md`
-- `NetworkPolicy.md`
-- `PSS.md`
-- `Trivy.md`
+- `apparmor.md`
+- `audit.md`
+- `falco.md`
+- `networkpolicy.md`
+- `pss.md`
+- `trivy.md`
 
 ## Universal CKS Flow
 

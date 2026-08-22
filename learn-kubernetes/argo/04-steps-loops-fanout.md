@@ -28,7 +28,7 @@ A **steps** template is an invocator. It is a **list of lists**:
 
 Each iteration is a child step. Combine with `when:` for conditionals (`{{steps.A.outputs.result}} == foo`).
 
-**Steps vs DAG:** steps are naturally sequential groups. DAGs declare **dependencies** and maximise parallelism (see `07.md`). Nested steps can express a DAG, but DAG templates are the exam’s dependency graph.
+**Steps vs DAG:** steps are naturally sequential groups. DAGs declare **dependencies** and maximise parallelism (see `07-dag-templates.md`). Nested steps can express a DAG, but DAG templates are the exam’s dependency graph.
 
 ## Question
 
