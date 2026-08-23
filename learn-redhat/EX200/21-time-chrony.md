@@ -4,243 +4,223 @@
 
 Another cheap, predictable task. Two commands for the timezone, one config edit plus a restart for NTP. Do it early.
 
-## Concept Refresher
+## Before You Start
 
-### The tools
-
-| Tool | Purpose |
-| --- | --- |
-| **`timedatectl`** | **Timezone, clock, and whether NTP is enabled.** The systemd front end |
-| **`chronyd`** | **The NTP daemon on RHEL 7+.** Replaced `ntpd` |
-| `chronyc` | The chrony client: query and control the running daemon |
-| `hwclock` | The hardware (RTC) clock |
-| `date` | Show or set the system clock manually |
-
-`ntpd` is gone from RHEL 8 onwards. If a task mentions NTP, the answer is **chrony**.
-
-### timedatectl
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
-timedatectl                              # full status
-timedatectl status                       # the same
-timedatectl list-timezones               # every valid timezone name
+vagrant ssh server1    # or ssh into your practice VM
+```
+
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+Reading every chrony directive upfront feels like learning. Typing them one at a time actually is.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. Current time status
+
+```bash
+timedatectl
+```
+
+**You should see** local time, timezone, **`System clock synchronized:`**, and **`NTP service:`**. Those last two are different — you want both yes/active for a working time client.
+
+Individual properties:
+
+```bash
+timedatectl show -p Timezone --value
+timedatectl show -p NTPSynchronized --value
+systemctl is-active chronyd
+```
+
+### 2. Set the timezone
+
+```bash
 timedatectl list-timezones | grep -i nairobi
 sudo timedatectl set-timezone Africa/Nairobi
-sudo timedatectl set-time "2026-08-18 14:30:00"    # only with NTP disabled
-sudo timedatectl set-ntp true            # enable NTP synchronisation
-sudo timedatectl set-ntp false           # disable it
-sudo timedatectl set-local-rtc 0         # keep the RTC in UTC (recommended)
-timedatectl show                         # machine-readable properties
-timedatectl timesync-status              # sync details (systemd-timesyncd only)
-```
-
-Reading the output:
-
-```text
-               Local time: Tue 2026-08-18 19:15:32 EAT
-           Universal time: Tue 2026-08-18 16:15:32 UTC
-                 RTC time: Tue 2026-08-18 16:15:32
-                Time zone: Africa/Nairobi (EAT, +0300)
-System clock synchronized: yes            <- is the clock in sync?
-              NTP service: active         <- is chronyd running?
-          RTC in local TZ: no
-```
-
-**"NTP service: active" means `chronyd` is running. "System clock synchronized: yes" means it has actually agreed with a server.** Those are different things, and a task asking you to configure a time client needs both.
-
-**`timedatectl set-ntp true` starts and enables `chronyd`** on RHEL. It is a shortcut for `systemctl enable --now chronyd`.
-
-### Setting the timezone
-
-```bash
-timedatectl list-timezones | grep -i london
-sudo timedatectl set-timezone Europe/London
 timedatectl | grep 'Time zone'
-```
-
-**Always find the exact name with `list-timezones` first.** `Africa/Nairobi` is valid; `EAT`, `Nairobi`, and `africa/nairobi` are not. `timedatectl` rejects an invalid name, which is helpful, but only after you have wasted the attempt.
-
-Behind the scenes this is a symlink, consistent with `05-hard-soft-links.md`:
-
-```bash
 ls -l /etc/localtime
-# /etc/localtime -> ../usr/share/zoneinfo/Africa/Nairobi
 ```
 
-### chrony configuration
+**You should see** `Africa/Nairobi` and a symlink into `/usr/share/zoneinfo/`. **Always find the exact name with `list-timezones` first** — names are case-sensitive and use `Region/City` format.
+
+Your shell prompt will not update until you start a new shell:
 
 ```bash
-sudo dnf install -y chrony
+exec bash
+```
+
+### 3. Install and enable chrony
+
+```bash
+rpm -q chrony || sudo dnf install -y chrony
 sudo systemctl enable --now chronyd
-sudo vim /etc/chrony.conf
+systemctl is-enabled chronyd
+systemctl is-active chronyd
 ```
 
-The directives that matter:
+**You should see** chrony enabled and active. **`timedatectl set-ntp true`** on RHEL also enables and starts `chronyd`.
 
-```text
-# A pool of servers; chrony picks several from it
-pool 2.rhel.pool.ntp.org iburst
-
-# A single named server
-server classroom.example.com iburst
-
-# Multiple servers
-server ntp1.example.com iburst
-server ntp2.example.com iburst
-
-driftfile /var/lib/chrony/drift
-makestep 1.0 3              # step the clock if off by >1s, in the first 3 updates
-rtcsync                     # keep the RTC in sync with the system clock
-leapsectz right/UTC
-logdir /var/log/chrony
-
-# Act as a server for a local network
-allow 192.168.56.0/24
-local stratum 10            # serve time even when unsynchronised
-```
-
-**`iburst` is the option to remember.** Without it, chrony sends one probe every 64 seconds and can take minutes to synchronise. With `iburst` it sends a rapid burst immediately, so you get sync in a couple of seconds — which matters when you need to *verify* the task before moving on.
-
-After editing, always:
+### 4. Enable NTP with timedatectl
 
 ```bash
+sudo timedatectl set-ntp true
+timedatectl | grep -i ntp
+```
+
+**You should see** `NTP service: active` and eventually `System clock synchronized: yes`.
+
+### 5. Configure a time server with iburst
+
+```bash
+sudo cp /etc/chrony.conf{,.bak}
+sudo sed -i 's/^pool /#pool /; s/^server /#server /' /etc/chrony.conf
+echo "server server2.lab.example.com iburst" | sudo tee -a /etc/chrony.conf
+grep -Ev '^\s*#|^\s*$' /etc/chrony.conf
 sudo systemctl restart chronyd
+sleep 5
 chronyc sources -v
 ```
 
-**A restart is required.** chrony does not reload the config on its own.
+**You should see** your server line with **`iburst`** — it sends a burst of probes immediately instead of waiting 64 seconds. **A restart is required**; chrony does not reload config on its own.
 
-### chronyc: verifying synchronisation
+If the hostname does not resolve, add it to `/etc/hosts` (see `25-hostnames-dns.md`).
+
+### 6. Verify synchronisation
 
 ```bash
-chronyc sources                     # the servers being used
-chronyc sources -v                  # with a legend explaining the columns
-chronyc sourcestats                 # accuracy statistics
-chronyc tracking                    # the current synchronisation state
-chronyc activity                    # how many sources are online/offline
-sudo chronyc makestep               # force an immediate step correction
-sudo chronyc -a 'burst 4/4'         # force rapid polling
-chronyc ntpdata                     # detailed NTP data per source
+chronyc sources -v
+chronyc tracking
+timedatectl | grep -i synchronized
 ```
+
+**You should see** a **`^*`** marker on the selected source in `sources`, a non-zero Reference ID in `tracking`, and `System clock synchronized: yes`.
 
 Reading `chronyc sources`:
 
 ```text
-MS Name/IP address         Stratum Poll Reach LastRx Last sample
-===============================================================================
-^* ntp1.example.com              2   6   377    41   +12us[  +18us] +/-   12ms
-^- ntp2.example.com              2   6   377    43  -1543us[-1537us] +/-   24ms
-^? ntp3.example.com              0   6     0     -     +0ns[   +0ns] +/-    0ns
-││
-│└─ * = the SELECTED source (synchronised to this one)
-│   - = an acceptable source, not selected
-│   ? = unreachable
-└── ^ = a server, = = a peer
+^* server2.lab.example.com    # selected source — synchronised
+^- ntp2.example.com          # acceptable, not selected
+^? ntp3.example.com          # unreachable
 ```
 
-**The `^*` marker is what you are looking for.** It means chrony has selected that server and the clock is synchronised. A `^?` on every line means nothing is reachable — check the network, the hostname, and the firewall.
-
-`chronyc tracking` gives the summary:
-
-```text
-Reference ID    : C0A83801 (ntp1.example.com)
-Stratum         : 3
-System time     : 0.000012345 seconds fast of NTP time
-Leap status     : Normal
-```
-
-`Leap status: Normal` and a non-zero Reference ID mean you are synchronised. `Reference ID : 00000000 ()` and `Leap status: Not synchronised` mean you are not.
-
-### Acting as an NTP server
-
-If a task asks the machine to serve time to a subnet:
+### 7. Force a clock step correction
 
 ```bash
-sudo tee -a /etc/chrony.conf <<'EOF'
-allow 192.168.56.0/24
-EOF
-sudo systemctl restart chronyd
+sudo chronyc makestep
+chronyc tracking
+```
 
-# NTP uses UDP 123
+**You should see** the clock corrected immediately rather than slewed gradually. The `makestep 1.0 3` line in `chrony.conf` controls when stepping is allowed at startup.
+
+### 8. Keep the hardware clock in UTC
+
+```bash
+timedatectl | grep -i 'RTC in local'
+sudo timedatectl set-local-rtc 0
+grep rtcsync /etc/chrony.conf
+```
+
+**You should see** `RTC in local TZ: no`. **`set-local-rtc 0`** keeps the RTC in UTC, which is recommended.
+
+### 9. Acting as an NTP server (brief)
+
+On a server that must serve time to a subnet:
+
+```bash
+grep '^allow' /etc/chrony.conf
+# if missing:
+echo "allow 192.168.56.0/24" | sudo tee -a /etc/chrony.conf
+sudo systemctl restart chronyd
 sudo firewall-cmd --permanent --add-service=ntp
 sudo firewall-cmd --reload
 ```
 
-**Serving time requires opening the firewall; being a client does not.** A client makes outbound connections, which firewalld allows by default. That asymmetry is a common source of confusion.
+**Serving time requires opening the firewall; being a client does not.** NTP is UDP port 123.
 
-### The hardware clock
+### Mini checkpoint
 
-```bash
-sudo hwclock                        # read the RTC
-sudo hwclock --systohc              # system clock -> RTC
-sudo hwclock --hctosys              # RTC -> system clock
-timedatectl set-local-rtc 0         # keep the RTC in UTC (recommended)
-```
+| Command / file | Remember |
+| --- | --- |
+| `timedatectl set-timezone Region/City` | persists via `/etc/localtime` symlink |
+| `timedatectl set-ntp true` | enables and starts `chronyd` |
+| Edit `/etc/chrony.conf` | then **`systemctl restart chronyd`** |
+| `iburst` on server lines | fast initial synchronisation |
+| `chronyc sources -v` | look for **`^*`** |
+| `chronyc tracking` | Reference ID and Leap status |
+| `set-time` | fails while NTP is enabled |
+| `ntpd` | gone on RHEL 8+ — use **chrony** |
 
-**Keep the RTC in UTC.** `RTC in local TZ: yes` causes problems around daylight saving transitions and RHEL warns about it. On a VM you will rarely touch `hwclock`, because `rtcsync` in `chrony.conf` handles it.
+---
 
-### Setting the time manually
+## Practice Tasks
 
-```bash
-sudo timedatectl set-ntp false            # NTP must be off first
-sudo timedatectl set-time "2026-08-18 14:30:00"
-sudo timedatectl set-time 14:30:00        # time only
-sudo date -s "2026-08-18 14:30:00"        # the older way
-sudo timedatectl set-ntp true             # turn it back on
-```
-
-**`set-time` fails while NTP is active**, with "Automatic time synchronization is enabled". That is deliberate — you cannot hand-set a clock that a daemon is actively correcting. Disable NTP, set the time, re-enable.
-
-On the exam a task almost always wants NTP **enabled**, not a manually set clock. Read the wording.
-
-### date formatting
-
-Useful in scripts and cron jobs:
-
-```bash
-date                              # default format
-date +%F                          # 2026-08-18
-date +%T                          # 19:15:32
-date "+%Y-%m-%d %H:%M:%S"
-date +%s                          # Unix epoch seconds
-date -u                           # UTC
-date -d "2026-12-25"              # a specific date
-date -d "next friday"
-date -d "@1755000000"             # from epoch seconds
-date -d "2 days ago" +%F
-```
-
-Remember from `19-scheduling-cron-at.md` that `%` must be escaped as `\%` inside a crontab.
-
-## Tasks
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Determine the current timezone, whether the clock is synchronised, and whether the NTP service is active.
 
+> Hint: `timedatectl` — read three specific lines.
+
 **Task 2.** Set the system timezone to `Africa/Nairobi`, having first confirmed the exact name is valid.
+
+> Hint: `list-timezones | grep -i nairobi` first.
 
 **Task 3.** Show what file `timedatectl set-timezone` actually changes.
 
+> Hint: `ls -l /etc/localtime`.
+
 **Task 4.** Ensure `chrony` is installed, enabled, and running.
+
+> Hint: `enable --now chronyd`.
 
 **Task 5.** Configure this system to synchronise its time from `server2.lab.example.com`, replacing any existing time sources, using the option that makes synchronisation happen quickly.
 
+> Hint: follow-along step 5; comment out pool/server lines; add `iburst`.
+
 **Task 6.** Verify that the system has actually synchronised with the configured server, and identify the selected source.
+
+> Hint: follow-along step 6; three signs of success.
 
 **Task 7.** Enable NTP synchronisation using `timedatectl` and confirm what service that started.
 
+> Hint: `set-ntp true` starts `chronyd`.
+
 **Task 8.** Configure `server2` to act as an NTP server for the `192.168.56.0/24` network, including any firewall change required.
+
+> Hint: follow-along step 9; `allow` plus `firewall-cmd --add-service=ntp --permanent`.
 
 **Task 9.** Disable NTP, set the system clock manually to a specific time, then re-enable NTP.
 
+> Hint: `set-ntp false` before `set-time`.
+
 **Task 10.** Force chrony to correct a large clock offset immediately rather than slewing gradually.
+
+> Hint: `chronyc makestep`.
 
 **Task 11.** Determine the current stratum and reference server that this system is synchronised to.
 
+> Hint: `chronyc tracking`.
+
 **Task 12.** Ensure the hardware clock is kept in UTC rather than local time.
+
+> Hint: `set-local-rtc 0`.
 
 **Task 13.** Confirm your time configuration survives a reboot.
 
+> Hint: check `is-enabled chronyd` and `chronyc sources` after reboot.
+
 **Task 14.** A system shows "System clock synchronized: no" and every source is marked `^?`. List the things you would check, in order.
+
+> Hint: chronyd running? config restarted? name resolves? firewall on server?
 
 ---
 
@@ -652,6 +632,109 @@ timedatectl | grep -E 'Time zone|synchronized|NTP service'
 systemctl is-enabled chronyd
 chronyc sources -v | grep '\^\*'         # a selected source exists
 ```
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### The tools
+
+| Tool | Purpose |
+| --- | --- |
+| **`timedatectl`** | **Timezone, clock, and whether NTP is enabled.** The systemd front end |
+| **`chronyd`** | **The NTP daemon on RHEL 7+.** Replaced `ntpd` |
+| `chronyc` | The chrony client: query and control the running daemon |
+| `hwclock` | The hardware (RTC) clock |
+| `date` | Show or set the system clock manually |
+
+`ntpd` is gone from RHEL 8 onwards. If a task mentions NTP, the answer is **chrony**.
+
+### timedatectl
+
+```bash
+timedatectl                              # full status
+timedatectl list-timezones               # every valid timezone name
+timedatectl list-timezones | grep -i nairobi
+sudo timedatectl set-timezone Africa/Nairobi
+sudo timedatectl set-time "2026-08-18 14:30:00"    # only with NTP disabled
+sudo timedatectl set-ntp true            # enable NTP synchronisation
+sudo timedatectl set-ntp false           # disable it
+sudo timedatectl set-local-rtc 0         # keep the RTC in UTC (recommended)
+timedatectl show                         # machine-readable properties
+```
+
+**"NTP service: active" means `chronyd` is running. "System clock synchronized: yes" means it has actually agreed with a server.**
+
+### chrony configuration
+
+```bash
+sudo dnf install -y chrony
+sudo systemctl enable --now chronyd
+sudo vim /etc/chrony.conf
+```
+
+The directives that matter:
+
+```text
+pool 2.rhel.pool.ntp.org iburst
+server classroom.example.com iburst
+driftfile /var/lib/chrony/drift
+makestep 1.0 3              # step the clock if off by >1s, in the first 3 updates
+rtcsync                     # keep the RTC in sync with the system clock
+allow 192.168.56.0/24       # act as a server for a local network
+local stratum 10            # serve time even when unsynchronised
+```
+
+**`iburst` is the option to remember.** After editing, always:
+
+```bash
+sudo systemctl restart chronyd
+chronyc sources -v
+```
+
+### chronyc: verifying synchronisation
+
+```bash
+chronyc sources                     # the servers being used
+chronyc sources -v                  # with a legend explaining the columns
+chronyc sourcestats                 # accuracy statistics
+chronyc tracking                    # the current synchronisation state
+chronyc activity                    # how many sources are online/offline
+sudo chronyc makestep               # force an immediate step correction
+sudo chronyc -a 'burst 4/4'         # force rapid polling
+```
+
+**The `^*` marker is what you are looking for.** It means chrony has selected that server and the clock is synchronised.
+
+### The hardware clock
+
+```bash
+sudo hwclock                        # read the RTC
+sudo hwclock --systohc              # system clock -> RTC
+sudo hwclock --hctosys              # RTC -> system clock
+timedatectl set-local-rtc 0         # keep the RTC in UTC (recommended)
+```
+
+### Setting the time manually
+
+```bash
+sudo timedatectl set-ntp false            # NTP must be off first
+sudo timedatectl set-time "2026-08-18 14:30:00"
+sudo timedatectl set-ntp true             # turn it back on
+```
+
+**`set-time` fails while NTP is active**, with "Automatic time synchronization is enabled".
+
+### date formatting
+
+```bash
+date +%F                          # 2026-08-18
+date +%T                          # 19:15:32
+date +%s                          # Unix epoch seconds
+date -u                           # UTC
+```
+
+Remember from `19-scheduling-cron-at.md` that `%` must be escaped as `\%` inside a crontab.
 
 ## Exam Tips
 

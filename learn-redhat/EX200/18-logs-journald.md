@@ -4,332 +4,284 @@
 
 "Preserve system journals" is a specific, commonly asked task with a specific answer. Learn it exactly.
 
-## Concept Refresher
+## Before You Start
 
-### Two logging systems, side by side
-
-RHEL runs both:
-
-| | **systemd-journald** | **rsyslog** |
-| --- | --- | --- |
-| Reads with | `journalctl` | `cat`, `less`, `grep`, `tail` |
-| Format | Binary, indexed, structured | Plain text |
-| Default storage | **`/run/log/journal`** — memory, **lost on reboot** | `/var/log/*` — on disk |
-| Persistent storage | `/var/log/journal` — you must create it | Always |
-| Config | `/etc/systemd/journald.conf` | `/etc/rsyslog.conf`, `/etc/rsyslog.d/*.conf` |
-| Strength | Metadata, per-unit filtering, priorities | Simple text, remote forwarding, custom files |
-
-`rsyslog` receives its messages from journald, which is why the same events appear in both.
-
-### The text log files
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
-/var/log/messages        # most system messages. THE general-purpose log
-/var/log/secure          # authentication, sudo, sshd. THE security log
-/var/log/maillog         # mail
-/var/log/cron            # cron job execution
-/var/log/boot.log        # boot messages
-/var/log/dmesg           # kernel ring buffer at boot
-/var/log/audit/audit.log # SELinux and audit events (auditd, not rsyslog)
-/var/log/httpd/          # per-application directories
-/var/log/lastlog         # binary; read with `lastlog`
-/var/log/wtmp            # binary; read with `last`
-/var/log/btmp            # binary; read with `lastb`
+vagrant ssh server1    # or ssh into your practice VM
 ```
 
-**The two to remember: `/var/log/messages` for general problems, `/var/log/secure` for authentication.** When SSH key authentication fails, the reason is in `/var/log/secure` (see `09-ssh.md`). When a service misbehaves, `/var/log/messages` or the journal.
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+Reading every journalctl flag upfront feels like learning. Typing them one at a time actually is.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. The two text logs you will use most
 
 ```bash
-sudo tail -f /var/log/messages
-sudo tail -50 /var/log/secure
-sudo grep -i fail /var/log/secure
-sudo zgrep -i error /var/log/messages-*.gz    # rotated logs are gzipped
+sudo tail -20 /var/log/messages
+sudo tail -20 /var/log/secure
 ```
 
-### journalctl
+**You should see** recent system messages in `/var/log/messages` and authentication-related lines in `/var/log/secure`.
+
+**`/var/log/messages`** is the general-purpose log. **`/var/log/secure`** is where SSH failures, sudo denials, and login attempts appear.
+
+Search a rotated log with `zgrep`:
 
 ```bash
-journalctl                          # everything, oldest first, in a pager
-journalctl -e                       # jump to the END
-journalctl -f                       # FOLLOW, like tail -f
-journalctl -n 50                    # last 50 lines
-journalctl -r                       # reverse: newest first
-journalctl --no-pager
-journalctl -o verbose               # all metadata fields
-journalctl -o json-pretty
+sudo zgrep -i error /var/log/messages-*.gz 2>/dev/null | tail
+```
 
-# By unit
-journalctl -u sshd
-journalctl -u sshd -f
-journalctl -xeu httpd               # THE debugging command
+**You should see** matching lines from compressed archives, or nothing if no rotated files exist yet.
 
-# By boot
-journalctl -b                       # this boot
-journalctl -b -1                    # previous boot
+### 2. The journal: last lines and follow mode
+
+```bash
+journalctl -n 30 --no-pager
+journalctl -e
+```
+
+**You should see** the last 30 journal entries, then (with `-e`) the pager jumps to the **end** of the full journal.
+
+Follow live:
+
+```bash
+journalctl -f
+```
+
+**You should see** new entries appear as they happen. Press `Ctrl+c` to stop.
+
+### 3. Filter by systemd unit
+
+```bash
+journalctl -u sshd -n 20 --no-pager
+journalctl -xeu sshd | tail -30
+```
+
+**You should see** only `sshd` entries. The `-xeu` form adds explanatory help text and jumps to the end — **the fastest route from "service failed" to "here is why".**
+
+### 4. Filter by priority and time
+
+```bash
+journalctl -p err --since today --no-pager | head
+journalctl -p warning..err --since "1 hour ago" --no-pager | head
+```
+
+**You should see** error-level entries from today. `-p err` includes err **and everything more severe** (crit, alert, emerg). Lower number = more serious.
+
+Priority names and numbers are interchangeable: `-p 3` equals `-p err`.
+
+### 5. Filter by boot and kernel messages
+
+```bash
 journalctl --list-boots
-
-# By time
-journalctl --since "2026-08-18 10:00:00"
-journalctl --since today
-journalctl --since yesterday --until today
-journalctl --since "1 hour ago"
-journalctl --since "10 min ago"
-journalctl --since "09:00" --until "10:00"
-
-# By priority
-journalctl -p err                   # err and worse
-journalctl -p warning..err          # a range
-journalctl -p 3
-
-# By other fields
-journalctl _UID=1001
-journalctl _PID=1234
-journalctl _COMM=sshd
-journalctl /usr/sbin/httpd          # by executable path
-journalctl -k                       # KERNEL messages only (= dmesg)
-journalctl --user                   # the current user's session units
-
-# Combining
-journalctl -u httpd -p err --since today --no-pager
+journalctl -b -1 -n 10 --no-pager    # may be empty if journal is volatile
+journalctl -k -b | tail -20
+dmesg -T | tail -20
 ```
 
-**`journalctl -xeu UNIT` is the command to internalise:** `-x` adds explanatory help text, `-e` jumps to the end, `-u` filters to one unit. It is the fastest route from "the service failed" to "here is why".
+**You should see** boot indices in `--list-boots`. If only boot `0` exists, the journal is **not persistent yet** — it lives in memory and was wiped at the last reboot.
 
-### Priority levels
+`-k` shows kernel messages (same content as `dmesg`). **`dmesg -T`** adds human-readable timestamps; raw `dmesg` shows seconds since boot.
 
-```text
-0  emerg     system is unusable
-1  alert     action must be taken immediately
-2  crit      critical
-3  err       error
-4  warning   warning
-5  notice    normal but significant
-6  info      informational
-7  debug     debug
-```
-
-`journalctl -p err` shows priority 3 **and everything more severe** (2, 1, 0). Lower number means more serious. The names and numbers are interchangeable: `-p 3` equals `-p err`.
-
-### Making the journal persistent
-
-**This is the "preserve system journals" objective.** By default the journal lives in `/run/log/journal`, which is a tmpfs, so **it is erased at every reboot**. That is why `journalctl -b -1` often returns nothing.
-
-Three ways to fix it. Any of them is acceptable, but know at least one cold.
-
-**Method 1 — create the directory (simplest):**
+### 6. Structured metadata filters
 
 ```bash
-sudo mkdir -p /var/log/journal
-sudo systemd-tmpfiles --create --prefix /var/log/journal
-sudo systemctl restart systemd-journald
+PID=$(systemctl show -p MainPID --value sshd)
+journalctl _PID=$PID -n 10 --no-pager
+journalctl -o verbose -n 1 --no-pager | head -30
 ```
 
-journald's default `Storage=auto` means "persistent if `/var/log/journal` exists, volatile otherwise". Creating the directory is genuinely sufficient.
+**You should see** entries from the running sshd process, then a dump of every metadata field available for filtering (`_COMM=`, `_UID=`, `_SYSTEMD_UNIT=`, and more).
 
-**Method 2 — set it explicitly in the config (most explicit, best for the exam):**
+### 7. Preserve the journal across reboots
+
+**This is the "preserve system journals" objective.**
 
 ```bash
 sudo mkdir -p /var/log/journal
 sudo sed -i 's/^#\?Storage=.*/Storage=persistent/' /etc/systemd/journald.conf
 grep -E '^Storage' /etc/systemd/journald.conf
+sudo systemd-tmpfiles --create --prefix /var/log/journal
 sudo systemctl restart systemd-journald
 ```
 
-**Method 3 — a drop-in file (cleanest):**
-
-```bash
-sudo mkdir -p /etc/systemd/journald.conf.d /var/log/journal
-sudo tee /etc/systemd/journald.conf.d/persistent.conf <<'EOF'
-[Journal]
-Storage=persistent
-EOF
-sudo systemctl restart systemd-journald
-```
-
-Verify it worked:
+**You should see** `Storage=persistent` in the config, and a machine-id directory under `/var/log/journal/`:
 
 ```bash
 ls -ld /var/log/journal
-ls /var/log/journal/                # a machine-id directory should appear
+ls /var/log/journal/
 journalctl --disk-usage
-sudo reboot
-journalctl --list-boots             # after the reboot, MORE THAN ONE entry
-journalctl -b -1 | head             # the previous boot is readable
 ```
 
-**`journalctl --list-boots` showing more than one boot is the proof.** If it still shows one, the journal is not persistent.
+After a reboot, **`journalctl --list-boots` showing more than one boot is the proof.**
 
-The `Storage=` values:
-
-| Value | Meaning |
-| --- | --- |
-| `volatile` | Memory only, always |
-| `persistent` | On disk, creating `/var/log/journal` if needed |
-| **`auto`** | **The default.** Persistent if `/var/log/journal` exists, else volatile |
-| `none` | Discard everything |
-
-### Limiting journal size
+### 8. Limit and shrink journal disk use
 
 ```bash
-sudo vi /etc/systemd/journald.conf
+journalctl --disk-usage
+sudo journalctl --vacuum-size=100M
+journalctl --disk-usage
 ```
 
-```text
+**You should see** disk usage before and after vacuuming. **`--vacuum-*` acts immediately** on existing data; `SystemMaxUse=` in config governs future growth.
+
+To set a persistent ceiling:
+
+```bash
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo tee /etc/systemd/journald.conf.d/size.conf <<'EOF'
 [Journal]
 Storage=persistent
-SystemMaxUse=500M          # total disk the journal may use
-SystemKeepFree=1G          # leave at least this much free
-SystemMaxFileSize=100M     # per journal file
-MaxRetentionSec=1month     # discard entries older than this
-MaxFileSec=1week           # rotate files at least this often
-```
-
-```bash
+SystemMaxUse=500M
+EOF
 sudo systemctl restart systemd-journald
-journalctl --disk-usage
+systemd-analyze cat-config systemd/journald.conf | grep -E 'Storage|SystemMaxUse'
 ```
 
-Manual cleanup:
+### 9. rsyslog: add a rule and prove it works
 
 ```bash
-sudo journalctl --vacuum-size=200M      # shrink to 200 MB
-sudo journalctl --vacuum-time=2weeks    # drop entries older than 2 weeks
-sudo journalctl --vacuum-files=5        # keep at most 5 journal files
-sudo journalctl --rotate                # rotate now
-sudo journalctl --verify                # integrity check
-```
-
-### rsyslog configuration
-
-Useful when a task says "send messages of type X to file Y".
-
-```bash
-cat /etc/rsyslog.conf
-ls /etc/rsyslog.d/
-```
-
-The rule syntax is `facility.priority   destination`:
-
-```text
-*.info;mail.none;authpriv.none;cron.none    /var/log/messages
-authpriv.*                                  /var/log/secure
-mail.*                                      -/var/log/maillog
-cron.*                                      /var/log/cron
-*.emerg                                     :omusrmsg:*
-local7.*                                    /var/log/boot.log
-```
-
-Facilities: `auth`, `authpriv`, `cron`, `daemon`, `kern`, `lpr`, `mail`, `news`, `syslog`, `user`, `uucp`, `local0`-`local7`.
-
-Priorities, least to most severe: `debug`, `info`, `notice`, `warning`, `err`, `crit`, `alert`, `emerg`.
-
-Modifiers worth knowing:
-
-| Syntax | Meaning |
-| --- | --- |
-| `mail.info` | mail facility, info **and above** |
-| `mail.=info` | **exactly** info, nothing else |
-| `mail.!info` | everything **except** info and above |
-| `mail.none` | exclude mail entirely from this rule |
-| `*.info` | any facility, info and above |
-| `-/var/log/maillog` | The leading `-` means **do not sync after each write** (faster) |
-
-Adding a custom rule:
-
-```bash
-sudo tee /etc/rsyslog.d/custom.conf <<'EOF'
-# All debug-level and above messages to a dedicated file
+sudo tee /etc/rsyslog.d/mydebug.conf <<'EOF'
 *.debug    /var/log/mydebug.log
 EOF
-
-sudo rsyslogd -N1                        # SYNTAX CHECK
+sudo rsyslogd -N1
 sudo systemctl restart rsyslog
-logger -p user.debug "test message"      # generate a message
-sudo tail /var/log/mydebug.log
+logger -p user.debug "EX200 debug test message"
+sudo tail -5 /var/log/mydebug.log
 ```
 
-**`rsyslogd -N1` validates the configuration**, analogous to `sshd -t`. And **`logger` is how you generate a test message** — indispensable for proving a logging task actually works.
+**You should see** your test message in `/var/log/mydebug.log`. **`rsyslogd -N1`** validates syntax before restart. **`logger`** generates test messages — indispensable for proving a logging task works.
+
+Exact priority with `=`:
 
 ```bash
-logger "a plain message"                       # facility user, priority notice
-logger -p local7.err "an error"
-logger -t myapp "tagged message"
-logger -p authpriv.info "auth test"
+sudo tee /etc/rsyslog.d/local7.conf <<'EOF'
+local7.=info    /var/log/local7.log
+EOF
+sudo rsyslogd -N1 && sudo systemctl restart rsyslog
+logger -p local7.info "should appear"
+logger -p local7.err  "should NOT appear"
+sudo cat /var/log/local7.log
 ```
 
-### Log rotation
+**You should see** only the `info` line. **`local7.=info`** means exactly info; plain `local7.info` would match info and everything more severe.
 
-`logrotate` prevents logs consuming the disk. Runs daily via a systemd timer.
+### 10. Find authentication failures in both systems
 
 ```bash
-cat /etc/logrotate.conf
-ls /etc/logrotate.d/
-sudo logrotate -d /etc/logrotate.conf         # DEBUG: show what it would do
-sudo logrotate -f /etc/logrotate.conf         # FORCE a rotation now
+journalctl -u sshd | grep -iE 'fail|invalid|denied' | tail
+sudo grep -iE 'fail|invalid' /var/log/secure | tail
+sudo lastb | head
+```
+
+**You should see** failed login attempts. The journal and `/var/log/secure` contain the same events; the text log survives even if the journal was volatile.
+
+### 11. Log rotation preview
+
+```bash
+sudo ls -l /var/log/messages*
+sudo logrotate -d /etc/logrotate.conf 2>&1 | head -20
 systemctl list-timers | grep logrotate
 ```
 
-A typical entry:
+**You should see** what logrotate would do in debug mode (`-d`) without changing anything. Use `-f` to force rotation now.
 
-```text
-/var/log/myapp.log {
-    weekly
-    rotate 4
-    compress
-    delaycompress
-    missingok
-    notifempty
-    create 0640 root root
-}
-```
+### Mini checkpoint
 
-`rotate 4` keeps four old copies; `compress` gzips them, which is why you need `zgrep` for older logs.
+Before the practice tasks, you should be able to explain:
 
-### Reading the kernel ring buffer
+| Command / concept | Does |
+| --- | --- |
+| `journalctl -u UNIT` | filter by systemd unit |
+| `journalctl -xeu UNIT` | explain + end + unit — debugging command |
+| `journalctl -p err` | err and worse |
+| `journalctl -b -1` | previous boot (needs persistent journal) |
+| `mkdir /var/log/journal` + `Storage=persistent` | preserve journals |
+| `journalctl --list-boots` | proof of persistence (>1 boot) |
+| `/var/log/messages` | general problems |
+| `/var/log/secure` | authentication |
+| `rsyslogd -N1` | syntax check |
+| `logger -p fac.pri "msg"` | generate a test message |
 
-```bash
-dmesg
-dmesg -T                     # human-readable timestamps
-dmesg -l err,warn            # by level
-dmesg | grep -i error
-dmesg -w                     # follow
-journalctl -k                # the same content, via the journal
-journalctl -k -b -1          # kernel messages from the previous boot
-```
+If any row is blank in your head, re-run the step above that covers it.
 
-**`dmesg -T`** is the one to remember; raw `dmesg` timestamps are seconds since boot, which are hard to correlate with anything.
+---
 
-## Tasks
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Show the last 30 lines of the system journal.
 
+> Hint: `-n` and optionally `--no-pager`.
+
 **Task 2.** Follow the journal for the `sshd` unit in real time, then generate a login attempt from another terminal to see it appear.
+
+> Hint: `-u sshd -f` from follow-along step 3.
 
 **Task 3.** Show all journal entries of priority `err` or worse from today.
 
+> Hint: `-p err --since today`.
+
 **Task 4.** Configure the system so that the journal is preserved across reboots. Verify after rebooting that the previous boot's log is readable.
+
+> Hint: follow-along step 7; proof is `journalctl --list-boots`.
 
 **Task 5.** Determine how much disk space the journal is currently using.
 
+> Hint: `--disk-usage`.
+
 **Task 6.** Limit the journal to a maximum of 500 MB of disk, persistently.
+
+> Hint: `SystemMaxUse=500M` in journald.conf or a drop-in; restart journald.
 
 **Task 7.** Reduce the existing journal to no more than 100 MB immediately.
 
+> Hint: `--vacuum-size=` acts now; config settings govern future growth.
+
 **Task 8.** Find all authentication failures recorded on the system, using both the journal and the traditional log file.
+
+> Hint: follow-along step 10; `/var/log/secure` for auth.
 
 **Task 9.** Show all kernel messages from the current boot with human-readable timestamps.
 
+> Hint: `journalctl -k -b` or `dmesg -T`.
+
 **Task 10.** Configure rsyslog so that all messages of priority `debug` and above are additionally written to `/var/log/mydebug.log`. Validate the configuration and prove it works with a test message.
+
+> Hint: follow-along step 9; `rsyslogd -N1` then `logger`.
 
 **Task 11.** Configure rsyslog so that only `local7` facility messages at exactly `info` priority go to `/var/log/local7.log`.
 
+> Hint: `local7.=info` — the `=` means exactly that priority.
+
 **Task 12.** Show every journal entry produced by the process ID of the running sshd.
+
+> Hint: `_PID=` metadata filter from step 6.
 
 **Task 13.** Show all journal entries between 09:00 and 10:00 today for the `httpd` unit.
 
+> Hint: `-u httpd --since "09:00" --until "10:00"`.
+
 **Task 14.** List every boot recorded in the journal and show the errors from two boots ago.
 
+> Hint: `--list-boots` then `-b -2 -p err`; requires persistent journal.
+
 **Task 15.** Force an immediate log rotation and confirm that `/var/log/messages` was rotated.
+
+> Hint: `logrotate -f`; compare `ls /var/log/messages*` before and after.
 
 ---
 
@@ -702,6 +654,303 @@ systemctl is-active rsyslog systemd-journald
 ```
 
 `systemd-journald` is `static` — it cannot be enabled or disabled because it is always required. That is expected, not a problem.
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### Two logging systems, side by side
+
+RHEL runs both:
+
+| | **systemd-journald** | **rsyslog** |
+| --- | --- | --- |
+| Reads with | `journalctl` | `cat`, `less`, `grep`, `tail` |
+| Format | Binary, indexed, structured | Plain text |
+| Default storage | **`/run/log/journal`** — memory, **lost on reboot** | `/var/log/*` — on disk |
+| Persistent storage | `/var/log/journal` — you must create it | Always |
+| Config | `/etc/systemd/journald.conf` | `/etc/rsyslog.conf`, `/etc/rsyslog.d/*.conf` |
+| Strength | Metadata, per-unit filtering, priorities | Simple text, remote forwarding, custom files |
+
+`rsyslog` receives its messages from journald, which is why the same events appear in both.
+
+### The text log files
+
+```bash
+/var/log/messages        # most system messages. THE general-purpose log
+/var/log/secure          # authentication, sudo, sshd. THE security log
+/var/log/maillog         # mail
+/var/log/cron            # cron job execution
+/var/log/boot.log        # boot messages
+/var/log/dmesg           # kernel ring buffer at boot
+/var/log/audit/audit.log # SELinux and audit events (auditd, not rsyslog)
+/var/log/httpd/          # per-application directories
+/var/log/lastlog         # binary; read with `lastlog`
+/var/log/wtmp            # binary; read with `last`
+/var/log/btmp            # binary; read with `lastb`
+```
+
+**The two to remember: `/var/log/messages` for general problems, `/var/log/secure` for authentication.** When SSH key authentication fails, the reason is in `/var/log/secure` (see `09-ssh.md`). When a service misbehaves, `/var/log/messages` or the journal.
+
+```bash
+sudo tail -f /var/log/messages
+sudo tail -50 /var/log/secure
+sudo grep -i fail /var/log/secure
+sudo zgrep -i error /var/log/messages-*.gz    # rotated logs are gzipped
+```
+
+### journalctl
+
+```bash
+journalctl                          # everything, oldest first, in a pager
+journalctl -e                       # jump to the END
+journalctl -f                       # FOLLOW, like tail -f
+journalctl -n 50                    # last 50 lines
+journalctl -r                       # reverse: newest first
+journalctl --no-pager
+journalctl -o verbose               # all metadata fields
+journalctl -o json-pretty
+
+# By unit
+journalctl -u sshd
+journalctl -u sshd -f
+journalctl -xeu httpd               # THE debugging command
+
+# By boot
+journalctl -b                       # this boot
+journalctl -b -1                    # previous boot
+journalctl --list-boots
+
+# By time
+journalctl --since "2026-08-18 10:00:00"
+journalctl --since today
+journalctl --since yesterday --until today
+journalctl --since "1 hour ago"
+journalctl --since "10 min ago"
+journalctl --since "09:00" --until "10:00"
+
+# By priority
+journalctl -p err                   # err and worse
+journalctl -p warning..err          # a range
+journalctl -p 3
+
+# By other fields
+journalctl _UID=1001
+journalctl _PID=1234
+journalctl _COMM=sshd
+journalctl /usr/sbin/httpd          # by executable path
+journalctl -k                       # KERNEL messages only (= dmesg)
+journalctl --user                   # the current user's session units
+
+# Combining
+journalctl -u httpd -p err --since today --no-pager
+```
+
+**`journalctl -xeu UNIT` is the command to internalise:** `-x` adds explanatory help text, `-e` jumps to the end, `-u` filters to one unit. It is the fastest route from "the service failed" to "here is why".
+
+### Priority levels
+
+```text
+0  emerg     system is unusable
+1  alert     action must be taken immediately
+2  crit      critical
+3  err       error
+4  warning   warning
+5  notice    normal but significant
+6  info      informational
+7  debug     debug
+```
+
+`journalctl -p err` shows priority 3 **and everything more severe** (2, 1, 0). Lower number means more serious. The names and numbers are interchangeable: `-p 3` equals `-p err`.
+
+### Making the journal persistent
+
+**This is the "preserve system journals" objective.** By default the journal lives in `/run/log/journal`, which is a tmpfs, so **it is erased at every reboot**. That is why `journalctl -b -1` often returns nothing.
+
+Three ways to fix it. Any of them is acceptable, but know at least one cold.
+
+**Method 1 — create the directory (simplest):**
+
+```bash
+sudo mkdir -p /var/log/journal
+sudo systemd-tmpfiles --create --prefix /var/log/journal
+sudo systemctl restart systemd-journald
+```
+
+journald's default `Storage=auto` means "persistent if `/var/log/journal` exists, volatile otherwise". Creating the directory is genuinely sufficient.
+
+**Method 2 — set it explicitly in the config (most explicit, best for the exam):**
+
+```bash
+sudo mkdir -p /var/log/journal
+sudo sed -i 's/^#\?Storage=.*/Storage=persistent/' /etc/systemd/journald.conf
+grep -E '^Storage' /etc/systemd/journald.conf
+sudo systemctl restart systemd-journald
+```
+
+**Method 3 — a drop-in file (cleanest):**
+
+```bash
+sudo mkdir -p /etc/systemd/journald.conf.d /var/log/journal
+sudo tee /etc/systemd/journald.conf.d/persistent.conf <<'EOF'
+[Journal]
+Storage=persistent
+EOF
+sudo systemctl restart systemd-journald
+```
+
+Verify it worked:
+
+```bash
+ls -ld /var/log/journal
+ls /var/log/journal/                # a machine-id directory should appear
+journalctl --disk-usage
+sudo reboot
+journalctl --list-boots             # after the reboot, MORE THAN ONE entry
+journalctl -b -1 | head             # the previous boot is readable
+```
+
+**`journalctl --list-boots` showing more than one boot is the proof.** If it still shows one, the journal is not persistent.
+
+The `Storage=` values:
+
+| Value | Meaning |
+| --- | --- |
+| `volatile` | Memory only, always |
+| `persistent` | On disk, creating `/var/log/journal` if needed |
+| **`auto`** | **The default.** Persistent if `/var/log/journal` exists, else volatile |
+| `none` | Discard everything |
+
+### Limiting journal size
+
+```bash
+sudo vi /etc/systemd/journald.conf
+```
+
+```text
+[Journal]
+Storage=persistent
+SystemMaxUse=500M          # total disk the journal may use
+SystemKeepFree=1G          # leave at least this much free
+SystemMaxFileSize=100M     # per journal file
+MaxRetentionSec=1month     # discard entries older than this
+MaxFileSec=1week           # rotate files at least this often
+```
+
+```bash
+sudo systemctl restart systemd-journald
+journalctl --disk-usage
+```
+
+Manual cleanup:
+
+```bash
+sudo journalctl --vacuum-size=200M      # shrink to 200 MB
+sudo journalctl --vacuum-time=2weeks    # drop entries older than 2 weeks
+sudo journalctl --vacuum-files=5        # keep at most 5 journal files
+sudo journalctl --rotate                # rotate now
+sudo journalctl --verify                # integrity check
+```
+
+### rsyslog configuration
+
+Useful when a task says "send messages of type X to file Y".
+
+```bash
+cat /etc/rsyslog.conf
+ls /etc/rsyslog.d/
+```
+
+The rule syntax is `facility.priority   destination`:
+
+```text
+*.info;mail.none;authpriv.none;cron.none    /var/log/messages
+authpriv.*                                  /var/log/secure
+mail.*                                      -/var/log/maillog
+cron.*                                      /var/log/cron
+*.emerg                                     :omusrmsg:*
+local7.*                                    /var/log/boot.log
+```
+
+Facilities: `auth`, `authpriv`, `cron`, `daemon`, `kern`, `lpr`, `mail`, `news`, `syslog`, `user`, `uucp`, `local0`-`local7`.
+
+Priorities, least to most severe: `debug`, `info`, `notice`, `warning`, `err`, `crit`, `alert`, `emerg`.
+
+Modifiers worth knowing:
+
+| Syntax | Meaning |
+| --- | --- |
+| `mail.info` | mail facility, info **and above** |
+| `mail.=info` | **exactly** info, nothing else |
+| `mail.!info` | everything **except** info and above |
+| `mail.none` | exclude mail entirely from this rule |
+| `*.info` | any facility, info and above |
+| `-/var/log/maillog` | The leading `-` means **do not sync after each write** (faster) |
+
+Adding a custom rule:
+
+```bash
+sudo tee /etc/rsyslog.d/custom.conf <<'EOF'
+# All debug-level and above messages to a dedicated file
+*.debug    /var/log/mydebug.log
+EOF
+
+sudo rsyslogd -N1                        # SYNTAX CHECK
+sudo systemctl restart rsyslog
+logger -p user.debug "test message"      # generate a message
+sudo tail /var/log/mydebug.log
+```
+
+**`rsyslogd -N1` validates the configuration**, analogous to `sshd -t`. And **`logger` is how you generate a test message** — indispensable for proving a logging task actually works.
+
+```bash
+logger "a plain message"                       # facility user, priority notice
+logger -p local7.err "an error"
+logger -t myapp "tagged message"
+logger -p authpriv.info "auth test"
+```
+
+### Log rotation
+
+`logrotate` prevents logs consuming the disk. Runs daily via a systemd timer.
+
+```bash
+cat /etc/logrotate.conf
+ls /etc/logrotate.d/
+sudo logrotate -d /etc/logrotate.conf         # DEBUG: show what it would do
+sudo logrotate -f /etc/logrotate.conf         # FORCE a rotation now
+systemctl list-timers | grep logrotate
+```
+
+A typical entry:
+
+```text
+/var/log/myapp.log {
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+}
+```
+
+`rotate 4` keeps four old copies; `compress` gzips them, which is why you need `zgrep` for older logs.
+
+### Reading the kernel ring buffer
+
+```bash
+dmesg
+dmesg -T                     # human-readable timestamps
+dmesg -l err,warn            # by level
+dmesg | grep -i error
+dmesg -w                     # follow
+journalctl -k                # the same content, via the journal
+journalctl -k -b -1          # kernel messages from the previous boot
+```
+
+**`dmesg -T`** is the one to remember; raw `dmesg` timestamps are seconds since boot, which are hard to correlate with anything.
 
 ## Exam Tips
 

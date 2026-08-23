@@ -4,423 +4,239 @@
 
 **"Extend an existing logical volume" is one of the most reliably-appearing tasks on the exam**, and it is worth practising until it is automatic. LVM is also easier than raw partitions for anything involving resizing, which is why Red Hat uses it by default.
 
-## Concept Refresher
+## Before You Start
 
-### The three layers
-
-```text
-   ┌────────────────────────────────────────────────────────────┐
-   │  /data          mount point                                │
-   ├────────────────────────────────────────────────────────────┤
-   │  XFS            filesystem                                 │
-   ├────────────────────────────────────────────────────────────┤
-   │  LV: lv_data    LOGICAL VOLUME     "the usable device"     │
-   │       /dev/vg01/lv_data  =  /dev/mapper/vg01-lv_data       │
-   ├────────────────────────────────────────────────────────────┤
-   │  VG: vg01       VOLUME GROUP       "the pool of space"     │
-   │       carved into Physical Extents (PE), default 4 MiB     │
-   ├────────────────────────────────────────────────────────────┤
-   │  PV: /dev/sdb1  /dev/sdc1          PHYSICAL VOLUMES        │
-   ├────────────────────────────────────────────────────────────┤
-   │  /dev/sdb  /dev/sdc                disks                   │
-   └────────────────────────────────────────────────────────────┘
-```
-
-| Layer | What it is | Created with | Inspected with |
-| --- | --- | --- | --- |
-| **PV** | A disk or partition prepared for LVM | **`pvcreate`** | `pvs`, `pvdisplay` |
-| **VG** | A pool of space made of one or more PVs | **`vgcreate`** | `vgs`, `vgdisplay` |
-| **LV** | A slice of the VG, used like a partition | **`lvcreate`** | `lvs`, `lvdisplay` |
-
-**The command prefixes are completely regular:** `pv*`, `vg*`, `lv*`, each with `create`, `remove`, `display`, `s`, `extend`, `reduce`, `rename`, `scan`.
-
-### Why LVM
-
-| | Plain partition | **LVM** |
-| --- | --- | --- |
-| Grow it | Only if free space follows it | **Any free space in the VG** |
-| Span multiple disks | No | **Yes** |
-| Snapshot | No | Yes |
-| Shrink | ext4 only, awkward | ext4 yes; XFS still no |
-| Rename | No | **Yes** |
-
-**Growing is the point.** A plain partition can only grow into contiguous free space; an LV can grow using extents from anywhere in the VG, including a disk added later.
-
-### Physical extents
-
-A VG divides its space into fixed-size **physical extents**, 4 MiB by default. Every LV is a whole number of extents.
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
-sudo vgdisplay vg01 | grep -E 'PE Size|Total PE|Free.*PE'
+vagrant ssh server1    # or ssh into your practice VM
 ```
 
-```text
-  PE Size               4.00 MiB
-  Total PE              511
-  Free  PE / Size       255 / 1020.00 MiB
-```
+**Storage lessons need spare disks.** Your `server1` VM must have the three extra 2 GB disks described in `Lab-Setup.md`. Run `lsblk` — you should see unused disks (`sdb`, `sdc`, `sdd`) with no partitions and no mountpoints. **Never partition `/dev/sda` or `/dev/vda`** unless a task explicitly says so; it holds your OS.
+
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+---
+
+## Follow Along
+
+Work on **server1** with spare disks. After each step, compare your output to **You should see**.
+
+### 1. Inspect existing LVM layout
 
 ```bash
-sudo vgcreate -s 8M vg01 /dev/sdb1        # non-default extent size
-sudo vgcreate --physicalextentsize 16M vg01 /dev/sdb1
-```
-
-**Extent size matters for two exam reasons.** First, a task may specify it: "create a volume group with a 16 MiB extent size" means `vgcreate -s 16M`. Second, **LV sizes are rounded up to a whole number of extents**, so asking for a 100 MiB LV with 8 MiB extents gives you 104 MiB. That is expected, not an error.
-
-### Physical volumes
-
-```bash
-sudo pvcreate /dev/sdb1
-sudo pvcreate /dev/sdb1 /dev/sdc1         # several at once
-sudo pvcreate /dev/sdb                    # a whole disk, no partition table
-
-sudo pvs                                  # summary
-sudo pvs -o +pv_used
-sudo pvdisplay                            # detail
-sudo pvdisplay /dev/sdb1
-sudo pvscan
-sudo pvremove /dev/sdb1                   # must not be in a VG
-sudo pvmove /dev/sdb1                     # migrate extents off it first
-```
-
-```text
-$ sudo pvs
-  PV         VG    Fmt  Attr PSize   PFree
-  /dev/sda2  rhel  lvm2 a--  <19.00g      0
-  /dev/sdb1  vg01  lvm2 a--  1020.00m 508.00m
-  /dev/sdc1        lvm2 ---     1.00g   1.00g
-```
-
-**An empty `VG` column means the PV is not yet in a volume group.** `PFree` is the unallocated space on that PV.
-
-### Volume groups
-
-```bash
-sudo vgcreate vg01 /dev/sdb1
-sudo vgcreate vg01 /dev/sdb1 /dev/sdc1
-sudo vgcreate -s 16M vg01 /dev/sdb1
-
+sudo pvs
 sudo vgs
-sudo vgdisplay
-sudo vgdisplay vg01
-sudo vgscan
-
-sudo vgextend vg01 /dev/sdc1              # ADD a PV to the VG
-sudo vgreduce vg01 /dev/sdc1              # REMOVE a PV from the VG
-sudo vgrename vg01 vgdata
-sudo vgremove vg01                        # must contain no LVs
-sudo vgchange -an vg01                    # deactivate
-sudo vgchange -ay vg01                    # activate
-```
-
-```text
-$ sudo vgs
-  VG    #PV #LV #SN Attr   VSize   VFree
-  rhel    1   2   0 wz--n- <19.00g      0
-  vg01    1   1   0 wz--n- 1020.00m 508.00m
-```
-
-**`VFree` is the space available for new or extended LVs.** If it is zero, you must `vgextend` before you can `lvextend`.
-
-**`vgcreate` runs `pvcreate` implicitly** if the device is not already a PV. Doing it explicitly is clearer and is what tasks expect.
-
-### Logical volumes
-
-```bash
-# By size
-sudo lvcreate -n lv_data -L 500M vg01
-sudo lvcreate -n lv_data -L 1G vg01
-
-# By extent count
-sudo lvcreate -n lv_data -l 50 vg01
-
-# By percentage
-sudo lvcreate -n lv_data -l 50%FREE vg01
-sudo lvcreate -n lv_data -l 100%FREE vg01        # all remaining space
-sudo lvcreate -n lv_data -l 100%VG vg01
-
 sudo lvs
-sudo lvs -o +devices
-sudo lvdisplay
-sudo lvdisplay /dev/vg01/lv_data
-sudo lvrename vg01 lv_old lv_new
-sudo lvremove /dev/vg01/lv_data
-```
-
-```text
-$ sudo lvs
-  LV      VG   Attr       LSize   Pool Origin Data%
-  root    rhel -wi-ao---- <17.00g
-  swap    rhel -wi-ao----   2.00g
-  lv_data vg01 -wi-a-----  512.00m
-```
-
-**Case matters: `-L` is a size, `-l` is extents or a percentage.** Mixing them up is a classic slip:
-
-| Flag | Meaning | Example |
-| --- | --- | --- |
-| **`-L`** | **Size** | `-L 500M`, `-L 1G`, `-L +200M` |
-| **`-l`** | **Extents or percentage** | `-l 50`, `-l 100%FREE`, `-l +50` |
-| `-n` | Name | `-n lv_data` |
-
-Two device paths refer to the same LV:
-
-```bash
-ls -l /dev/vg01/lv_data
-ls -l /dev/mapper/vg01-lv_data
-```
-
-**Both work everywhere.** `/dev/vg01/lv_data` is easier to type; `/dev/mapper/vg01-lv_data` is what `lsblk` and `df` display. **Note the hyphen in the mapper name** — a VG or LV name containing a hyphen is doubled there, which is a good reason to use underscores.
-
-### Extending — the exam-critical operation
-
-```text
-   Need more space in /data?
-              │
-   ┌──────────▼──────────────────────────────┐
-   │  Does the VG have free space?           │
-   │     sudo vgs                            │
-   └──────────┬──────────────────────────────┘
-              │
-       ┌──────┴───────┐
-       │ yes          │ no
-       │              ▼
-       │      Add a PV first:
-       │        fdisk /dev/sdc      (28-disks-partitions.md)
-       │        pvcreate /dev/sdc1
-       │        vgextend vg01 /dev/sdc1
-       │              │
-       └──────┬───────┘
-              ▼
-     lvextend -r -L +500M /dev/vg01/lv_data
-              │
-              ▼
-       df -h /data     ← the size must have changed
-```
-
-```bash
-# The one command to remember
-sudo lvextend -r -L +500M /dev/vg01/lv_data
-
-# Variations
-sudo lvextend -r -L 2G /dev/vg01/lv_data          # to an absolute 2 GiB
-sudo lvextend -r -l +100%FREE /dev/vg01/lv_data   # use all remaining VG space
-sudo lvextend -r -l +50 /dev/vg01/lv_data         # 50 more extents
-```
-
-**`-r` (`--resizefs`) grows the filesystem at the same time.** Without it you have a bigger LV and a filesystem that still believes it is the old size:
-
-```bash
-sudo lvextend -L +500M /dev/vg01/lv_data          # no -r
-sudo lvs                                          # LV is bigger
-df -h /data                                       # filesystem is NOT
-```
-
-Then you must do it by hand:
-
-```bash
-sudo xfs_growfs /data              # XFS: takes the MOUNT POINT, must be mounted
-sudo resize2fs /dev/vg01/lv_data   # ext4: takes the DEVICE
-```
-
-**`-r` is worth memorising because it removes an entire class of mistake.** It calls the right tool for whichever filesystem is there.
-
-**The `+` matters:**
-
-| Command | Result |
-| --- | --- |
-| `-L +500M` | **Adds** 500 MiB |
-| `-L 500M` | Sets the total size **to** 500 MiB — a shrink if it was bigger |
-
-Asking for a smaller absolute size on XFS fails outright, which is a lucky escape. On ext4 without care it destroys data. **Use `+` when a task says "add" or "increase by".**
-
-### Shrinking
-
-```bash
-# ext4 only, and unmount first
-sudo umount /data
-sudo e2fsck -f /dev/vg01/lv_data
-sudo resize2fs /dev/vg01/lv_data 500M
-sudo lvreduce -L 500M /dev/vg01/lv_data
-sudo mount /data
-
-# or, with -r doing the filesystem part
-sudo lvreduce -r -L 500M /dev/vg01/lv_data
-```
-
-**XFS cannot shrink. At all. Ever.** The only route is backup, `lvreduce`, `mkfs.xfs`, restore.
-
-```text
-$ sudo lvreduce -r -L 500M /dev/vg01/lv_data
-fsadm: Xfs filesystem shrinking is not supported
-```
-
-**On the exam, "shrink" implies ext4 or a fresh filesystem.** Since RHEL's default is XFS, a shrink task is unusual — but recognise the constraint immediately so you do not waste time.
-
-**Shrinking below the used data destroys it.** Check first:
-
-```bash
-df -h /data
-```
-
-### Removing, in the right order
-
-```bash
-# 1. Unmount and remove the fstab entry FIRST
-sudo umount /data
-sudo vim /etc/fstab                       # delete the line
-sudo findmnt --verify
-
-# 2. Then work down the stack
-sudo lvremove /dev/vg01/lv_data
-sudo vgremove vg01
-sudo pvremove /dev/sdb1
-```
-
-**Removal is strictly bottom-up-blocked**: you cannot remove a VG containing LVs, or a PV belonging to a VG. LVM refuses with a clear message, which is helpful.
-
-**And the `/etc/fstab` entry must go first**, or the next boot drops to emergency mode looking for a device that no longer exists. Same rule as `28-disks-partitions.md`.
-
-To take a PV out of a VG that still has other PVs:
-
-```bash
-sudo pvs -o +pv_used                      # is anything on it?
-sudo pvmove /dev/sdc1                     # migrate extents elsewhere
-sudo vgreduce vg01 /dev/sdc1
-sudo pvremove /dev/sdc1
-```
-
-**`pvmove` before `vgreduce`** if the PV holds any extents, or you lose the data on it.
-
-### Inspecting everything
-
-```bash
-sudo pvs; sudo vgs; sudo lvs              # the three-command summary
-sudo lvs -o +devices                      # which PVs each LV uses
-sudo vgs -o +vg_free_count                # free extents
-sudo pvdisplay; sudo vgdisplay; sudo lvdisplay
-sudo lvmdiskscan
 lsblk
-sudo dmsetup ls
-sudo dmsetup info
 ```
+
+**You should see** the `rhel` VG on `sda2` with `root` and `swap` LVs, and unused disks below. **`pvs`, `vgs`, `lvs` are the three-command summary.**
+
+### 2. Create an LVM partition and physical volume
 
 ```bash
-# One-liner overview
-lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
-```
-
-```text
-NAME            SIZE TYPE FSTYPE      MOUNTPOINTS
-sda              20G disk
-├─sda1            1G part xfs         /boot
-└─sda2           19G part LVM2_member
-  ├─rhel-root    17G lvm  xfs         /
-  └─rhel-swap     2G lvm  swap        [SWAP]
-sdb               2G disk
-└─sdb1         1020M part LVM2_member
-  └─vg01-lv_data 512M lvm  xfs        /data
-```
-
-**`lsblk` shows the whole stack in one view**, which is why it is the fastest sanity check.
-
-### The complete workflow, start to finish
-
-```bash
-# 1. Partition a disk with type lvm (28-disks-partitions.md)
-lsblk
-sudo fdisk /dev/sdb          # n, Enter, Enter, +1G, t, lvm, w
-sudo partprobe /dev/sdb
 lsblk /dev/sdb
+sudo fdisk /dev/sdb
+```
 
-# 2. PV
+Create one 1 GiB partition, type `lvm`, write, then:
+
+```bash
+sudo partprobe /dev/sdb
 sudo pvcreate /dev/sdb1
 sudo pvs
-
-# 3. VG
-sudo vgcreate vg01 /dev/sdb1
-sudo vgs
-
-# 4. LV
-sudo lvcreate -n lv_data -L 500M vg01
-sudo lvs
-
-# 5. Filesystem
-sudo mkfs.xfs /dev/vg01/lv_data
-
-# 6. Mount point and mount
-sudo mkdir -p /data
-sudo mount /dev/vg01/lv_data /data
-
-# 7. PERSIST — the step that scores
-sudo blkid /dev/vg01/lv_data
-echo "UUID=$(sudo blkid -s UUID -o value /dev/vg01/lv_data)  /data  xfs  defaults  0 0" | sudo tee -a /etc/fstab
-sudo findmnt --verify
-sudo mount -a
-
-# 8. Verify
-df -hT /data
-lsblk
 ```
 
-**Eight steps. Step 7 is the one people forget, and it is where the marks are.**
+**You should see** `/dev/sdb1` with an empty VG column and full PFree. **Type `lvm` documents intent; pvcreate works regardless.**
 
-### Snapshots
-
-Not a listed objective, but easy and occasionally useful:
+### 3. Create a volume group
 
 ```bash
-sudo lvcreate -s -n lv_data_snap -L 200M /dev/vg01/lv_data
-sudo lvs
-sudo mount -o ro /dev/vg01/lv_data_snap /mnt
-sudo umount /mnt
-sudo lvconvert --merge /dev/vg01/lv_data_snap     # roll back to the snapshot
-sudo lvremove /dev/vg01/lv_data_snap
+sudo vgcreate vg01 /dev/sdb1
+sudo vgs
+sudo vgdisplay vg01 | grep -E 'VG Size|PE Size|Free'
 ```
 
-**A snapshot fills up as the origin changes, and becomes invalid when full.** Size it for the expected rate of change.
+**You should see** slightly less than 1 GiB usable (metadata overhead is normal), PE Size 4 MiB, and free extents equal to total.
 
-## Tasks
+### 4. Create a logical volume, filesystem, and mount
+
+```bash
+sudo lvcreate -n lv_data -L 500M vg01
+sudo lvs
+sudo mkfs.xfs /dev/vg01/lv_data
+sudo mkdir -p /data
+sudo mount /dev/vg01/lv_data /data
+df -hT /data
+```
+
+**You should see** a 500 MiB LV and an XFS filesystem mounted at `/data`. **`-L` is size; `-l` is extents or percentage.**
+
+### 5. Persist the mount
+
+```bash
+echo "UUID=$(sudo blkid -s UUID -o value /dev/vg01/lv_data)  /data  xfs  defaults  0 0" | sudo tee -a /etc/fstab
+sudo findmnt --verify
+sudo umount /data
+sudo mount -a
+df -hT /data
+```
+
+**You should see** `Success, no errors` from verify and `/data` mounted after `mount -a`. **Step 7 in the full stack is where marks are.**
+
+### 6. Extend LV and filesystem in one command
+
+```bash
+sudo vgs
+sudo lvextend -r -L +400M /dev/vg01/lv_data
+sudo lvs
+df -hT /data
+```
+
+**You should see** **both** `lvs` and `df` grow. **`-r` grows the filesystem — without it, `lvs` changes but `df` does not.**
+
+### 7. Extend the volume group with a second disk
+
+When `lvextend` says "Insufficient free space":
+
+```bash
+sudo fdisk /dev/sdc
+sudo partprobe /dev/sdc
+sudo pvcreate /dev/sdc1
+sudo vgextend vg01 /dev/sdc1
+sudo vgs
+sudo lvextend -r -L +1G /dev/vg01/lv_data
+df -hT /data
+```
+
+**You should see** `#PV` increase and `VFree` grow. **Classic exam sequence: fdisk → pvcreate → vgextend → lvextend -r.**
+
+### 8. Use all remaining VG space
+
+```bash
+sudo lvextend -r -l +100%FREE /dev/vg01/lv_data
+sudo vgs
+df -hT /data
+```
+
+**You should see** `VFree 0`. **Lowercase `-l` for percentages; `+100%FREE` adds all free extents.**
+
+### 9. Show which PVs an LV uses
+
+```bash
+sudo lvs -o +devices
+sudo lvdisplay -m /dev/vg01/lv_data | head -30
+```
+
+**You should see** device names and starting extents. **Before `vgreduce`, check whether the PV holds extents — use `pvmove` first.**
+
+### 10. Remove LVM safely
+
+```bash
+grep data /etc/fstab
+sudo sed -i '\|/data|d' /etc/fstab
+sudo umount /data
+sudo lvremove /dev/vg01/lv_data
+```
+
+**You should see** LVM refuse to remove a VG while LVs exist, and refuse `vgreduce` on a PV still in use. **Remove fstab entry first — always.**
+
+### Mini checkpoint
+
+Memorise: **`lvextend -r -L +SIZE /dev/VG/LV`**. Run **`sudo vgs` before every extend**. Verify with **`df -h`**, not `lvs` alone.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Display all physical volumes, volume groups, and logical volumes on this system, and describe how the root filesystem is laid out.
 
+> Hint: pvs, vgs, lvs, lsblk — explain /boot on sda1, LVM on sda2.
+
 **Task 2.** Partition `/dev/sdb` with a single 1 GiB partition of type Linux LVM, then create a physical volume on it.
+
+> Hint: fdisk +1G type lvm, partprobe, pvcreate; empty VG column means not in a VG yet.
 
 **Task 3.** Create a volume group named `vg01` from that physical volume, and report its total size, extent size, and free space.
 
+> Hint: vgcreate vg01; vgdisplay for size, PE size, free PE.
+
 **Task 4.** Create a 500 MiB logical volume named `lv_data` in `vg01`, format it with XFS, mount it at `/data`, and make the mount persistent.
+
+> Hint: lvcreate -n lv_data -L 500M, mkfs.xfs, mount, UUID= in fstab, findmnt --verify, mount -a.
 
 **Task 5.** Verify the mount survives a reboot.
 
+> Hint: findmnt --verify, mount -a, reboot, df -hT /data.
+
 **Task 6.** Extend `lv_data` by 400 MiB and grow the filesystem in a single command. Verify with `df`.
+
+> Hint: lvextend -r -L +400M; both lvs and df must change.
 
 **Task 7.** The volume group is now full and `lv_data` needs another 1 GiB. Add a second disk to the volume group and extend the logical volume.
 
+> Hint: When VFree is too small: fdisk sdc, pvcreate, vgextend, then lvextend -r.
+
 **Task 8.** Extend `lv_data` to consume all remaining free space in the volume group.
+
+> Hint: lvextend -r -l +100%FREE until VFree is 0.
 
 **Task 9.** Create a volume group named `vg02` with a 16 MiB physical extent size, then create a 100 MiB logical volume in it. Explain the resulting size.
 
+> Hint: vgcreate -s 16M; 100 MiB request rounds up to whole extents.
+
 **Task 10.** Create a logical volume using 50 percent of the free space in a volume group.
+
+> Hint: lvcreate -l 50%FREE vg02.
 
 **Task 11.** Create an ext4 logical volume, mount it, then shrink it to 300 MiB. Then explain why the same cannot be done with XFS.
 
+> Hint: ext4 shrink: umount, e2fsck -f, resize2fs, lvreduce; XFS cannot shrink.
+
 **Task 12.** Rename a logical volume and a volume group.
+
+> Hint: lvrename; vgrename needs vgchange -an and update fstab.
 
 **Task 13.** Report which physical volumes each logical volume actually occupies.
 
+> Hint: lvs -o +devices or lvdisplay -m.
+
 **Task 14.** Remove a physical volume from a volume group that has data on it, without losing the data.
+
+> Hint: pvmove before vgreduce when pv_used is non-zero.
 
 **Task 15.** Completely remove an LVM stack: unmount, remove the logical volume, the volume group, and the physical volume, in the correct order.
 
+> Hint: fstab first, umount, lvremove, vgremove, pvremove.
+
 **Task 16.** Take a snapshot of a logical volume, verify you can read from it, then remove it.
+
+> Hint: lvcreate -s snapshot; mount XFS snapshot with -o ro,nouuid.
 
 **Task 17.** Diagnose: `lvextend` reports "Insufficient free space".
 
+> Hint: Insufficient free space → vgextend first.
+
 **Task 18.** Diagnose: after `lvextend`, `lvs` shows the new size but `df` still shows the old one.
+
+> Hint: lvs grew, df did not → lvextend without -r; xfs_growfs MOUNTPOINT or resize2fs DEVICE.
 
 **Task 19.** Create a logical volume spanning two disks and confirm it does.
 
+> Hint: vgcreate with two PVs; lv larger than either disk proves spanning.
+
 **Task 20.** Verify every LVM change survives a reboot.
+
+> Hint: findmnt --verify, mount -a, pvs/vgs/lvs, reboot.
+
+---
 
 ---
 
@@ -1790,6 +1606,386 @@ df -hT                              # filesystems the SAME size as the LVs?
 sudo findmnt --verify
 sudo mount -a && echo OK
 ```
+
+---
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### The three layers
+
+```text
+   ┌────────────────────────────────────────────────────────────┐
+   │  /data          mount point                                │
+   ├────────────────────────────────────────────────────────────┤
+   │  XFS            filesystem                                 │
+   ├────────────────────────────────────────────────────────────┤
+   │  LV: lv_data    LOGICAL VOLUME     "the usable device"     │
+   │       /dev/vg01/lv_data  =  /dev/mapper/vg01-lv_data       │
+   ├────────────────────────────────────────────────────────────┤
+   │  VG: vg01       VOLUME GROUP       "the pool of space"     │
+   │       carved into Physical Extents (PE), default 4 MiB     │
+   ├────────────────────────────────────────────────────────────┤
+   │  PV: /dev/sdb1  /dev/sdc1          PHYSICAL VOLUMES        │
+   ├────────────────────────────────────────────────────────────┤
+   │  /dev/sdb  /dev/sdc                disks                   │
+   └────────────────────────────────────────────────────────────┘
+```
+
+| Layer | What it is | Created with | Inspected with |
+| --- | --- | --- | --- |
+| **PV** | A disk or partition prepared for LVM | **`pvcreate`** | `pvs`, `pvdisplay` |
+| **VG** | A pool of space made of one or more PVs | **`vgcreate`** | `vgs`, `vgdisplay` |
+| **LV** | A slice of the VG, used like a partition | **`lvcreate`** | `lvs`, `lvdisplay` |
+
+**The command prefixes are completely regular:** `pv*`, `vg*`, `lv*`, each with `create`, `remove`, `display`, `s`, `extend`, `reduce`, `rename`, `scan`.
+
+### Why LVM
+
+| | Plain partition | **LVM** |
+| --- | --- | --- |
+| Grow it | Only if free space follows it | **Any free space in the VG** |
+| Span multiple disks | No | **Yes** |
+| Snapshot | No | Yes |
+| Shrink | ext4 only, awkward | ext4 yes; XFS still no |
+| Rename | No | **Yes** |
+
+**Growing is the point.** A plain partition can only grow into contiguous free space; an LV can grow using extents from anywhere in the VG, including a disk added later.
+
+### Physical extents
+
+A VG divides its space into fixed-size **physical extents**, 4 MiB by default. Every LV is a whole number of extents.
+
+```bash
+sudo vgdisplay vg01 | grep -E 'PE Size|Total PE|Free.*PE'
+```
+
+```text
+  PE Size               4.00 MiB
+  Total PE              511
+  Free  PE / Size       255 / 1020.00 MiB
+```
+
+```bash
+sudo vgcreate -s 8M vg01 /dev/sdb1        # non-default extent size
+sudo vgcreate --physicalextentsize 16M vg01 /dev/sdb1
+```
+
+**Extent size matters for two exam reasons.** First, a task may specify it: "create a volume group with a 16 MiB extent size" means `vgcreate -s 16M`. Second, **LV sizes are rounded up to a whole number of extents**, so asking for a 100 MiB LV with 8 MiB extents gives you 104 MiB. That is expected, not an error.
+
+### Physical volumes
+
+```bash
+sudo pvcreate /dev/sdb1
+sudo pvcreate /dev/sdb1 /dev/sdc1         # several at once
+sudo pvcreate /dev/sdb                    # a whole disk, no partition table
+
+sudo pvs                                  # summary
+sudo pvs -o +pv_used
+sudo pvdisplay                            # detail
+sudo pvdisplay /dev/sdb1
+sudo pvscan
+sudo pvremove /dev/sdb1                   # must not be in a VG
+sudo pvmove /dev/sdb1                     # migrate extents off it first
+```
+
+```text
+$ sudo pvs
+  PV         VG    Fmt  Attr PSize   PFree
+  /dev/sda2  rhel  lvm2 a--  <19.00g      0
+  /dev/sdb1  vg01  lvm2 a--  1020.00m 508.00m
+  /dev/sdc1        lvm2 ---     1.00g   1.00g
+```
+
+**An empty `VG` column means the PV is not yet in a volume group.** `PFree` is the unallocated space on that PV.
+
+### Volume groups
+
+```bash
+sudo vgcreate vg01 /dev/sdb1
+sudo vgcreate vg01 /dev/sdb1 /dev/sdc1
+sudo vgcreate -s 16M vg01 /dev/sdb1
+
+sudo vgs
+sudo vgdisplay
+sudo vgdisplay vg01
+sudo vgscan
+
+sudo vgextend vg01 /dev/sdc1              # ADD a PV to the VG
+sudo vgreduce vg01 /dev/sdc1              # REMOVE a PV from the VG
+sudo vgrename vg01 vgdata
+sudo vgremove vg01                        # must contain no LVs
+sudo vgchange -an vg01                    # deactivate
+sudo vgchange -ay vg01                    # activate
+```
+
+```text
+$ sudo vgs
+  VG    #PV #LV #SN Attr   VSize   VFree
+  rhel    1   2   0 wz--n- <19.00g      0
+  vg01    1   1   0 wz--n- 1020.00m 508.00m
+```
+
+**`VFree` is the space available for new or extended LVs.** If it is zero, you must `vgextend` before you can `lvextend`.
+
+**`vgcreate` runs `pvcreate` implicitly** if the device is not already a PV. Doing it explicitly is clearer and is what tasks expect.
+
+### Logical volumes
+
+```bash
+# By size
+sudo lvcreate -n lv_data -L 500M vg01
+sudo lvcreate -n lv_data -L 1G vg01
+
+# By extent count
+sudo lvcreate -n lv_data -l 50 vg01
+
+# By percentage
+sudo lvcreate -n lv_data -l 50%FREE vg01
+sudo lvcreate -n lv_data -l 100%FREE vg01        # all remaining space
+sudo lvcreate -n lv_data -l 100%VG vg01
+
+sudo lvs
+sudo lvs -o +devices
+sudo lvdisplay
+sudo lvdisplay /dev/vg01/lv_data
+sudo lvrename vg01 lv_old lv_new
+sudo lvremove /dev/vg01/lv_data
+```
+
+```text
+$ sudo lvs
+  LV      VG   Attr       LSize   Pool Origin Data%
+  root    rhel -wi-ao---- <17.00g
+  swap    rhel -wi-ao----   2.00g
+  lv_data vg01 -wi-a-----  512.00m
+```
+
+**Case matters: `-L` is a size, `-l` is extents or a percentage.** Mixing them up is a classic slip:
+
+| Flag | Meaning | Example |
+| --- | --- | --- |
+| **`-L`** | **Size** | `-L 500M`, `-L 1G`, `-L +200M` |
+| **`-l`** | **Extents or percentage** | `-l 50`, `-l 100%FREE`, `-l +50` |
+| `-n` | Name | `-n lv_data` |
+
+Two device paths refer to the same LV:
+
+```bash
+ls -l /dev/vg01/lv_data
+ls -l /dev/mapper/vg01-lv_data
+```
+
+**Both work everywhere.** `/dev/vg01/lv_data` is easier to type; `/dev/mapper/vg01-lv_data` is what `lsblk` and `df` display. **Note the hyphen in the mapper name** — a VG or LV name containing a hyphen is doubled there, which is a good reason to use underscores.
+
+### Extending — the exam-critical operation
+
+```text
+   Need more space in /data?
+              │
+   ┌──────────▼──────────────────────────────┐
+   │  Does the VG have free space?           │
+   │     sudo vgs                            │
+   └──────────┬──────────────────────────────┘
+              │
+       ┌──────┴───────┐
+       │ yes          │ no
+       │              ▼
+       │      Add a PV first:
+       │        fdisk /dev/sdc      (28-disks-partitions.md)
+       │        pvcreate /dev/sdc1
+       │        vgextend vg01 /dev/sdc1
+       │              │
+       └──────┬───────┘
+              ▼
+     lvextend -r -L +500M /dev/vg01/lv_data
+              │
+              ▼
+       df -h /data     ← the size must have changed
+```
+
+```bash
+# The one command to remember
+sudo lvextend -r -L +500M /dev/vg01/lv_data
+
+# Variations
+sudo lvextend -r -L 2G /dev/vg01/lv_data          # to an absolute 2 GiB
+sudo lvextend -r -l +100%FREE /dev/vg01/lv_data   # use all remaining VG space
+sudo lvextend -r -l +50 /dev/vg01/lv_data         # 50 more extents
+```
+
+**`-r` (`--resizefs`) grows the filesystem at the same time.** Without it you have a bigger LV and a filesystem that still believes it is the old size:
+
+```bash
+sudo lvextend -L +500M /dev/vg01/lv_data          # no -r
+sudo lvs                                          # LV is bigger
+df -h /data                                       # filesystem is NOT
+```
+
+Then you must do it by hand:
+
+```bash
+sudo xfs_growfs /data              # XFS: takes the MOUNT POINT, must be mounted
+sudo resize2fs /dev/vg01/lv_data   # ext4: takes the DEVICE
+```
+
+**`-r` is worth memorising because it removes an entire class of mistake.** It calls the right tool for whichever filesystem is there.
+
+**The `+` matters:**
+
+| Command | Result |
+| --- | --- |
+| `-L +500M` | **Adds** 500 MiB |
+| `-L 500M` | Sets the total size **to** 500 MiB — a shrink if it was bigger |
+
+Asking for a smaller absolute size on XFS fails outright, which is a lucky escape. On ext4 without care it destroys data. **Use `+` when a task says "add" or "increase by".**
+
+### Shrinking
+
+```bash
+# ext4 only, and unmount first
+sudo umount /data
+sudo e2fsck -f /dev/vg01/lv_data
+sudo resize2fs /dev/vg01/lv_data 500M
+sudo lvreduce -L 500M /dev/vg01/lv_data
+sudo mount /data
+
+# or, with -r doing the filesystem part
+sudo lvreduce -r -L 500M /dev/vg01/lv_data
+```
+
+**XFS cannot shrink. At all. Ever.** The only route is backup, `lvreduce`, `mkfs.xfs`, restore.
+
+```text
+$ sudo lvreduce -r -L 500M /dev/vg01/lv_data
+fsadm: Xfs filesystem shrinking is not supported
+```
+
+**On the exam, "shrink" implies ext4 or a fresh filesystem.** Since RHEL's default is XFS, a shrink task is unusual — but recognise the constraint immediately so you do not waste time.
+
+**Shrinking below the used data destroys it.** Check first:
+
+```bash
+df -h /data
+```
+
+### Removing, in the right order
+
+```bash
+# 1. Unmount and remove the fstab entry FIRST
+sudo umount /data
+sudo vim /etc/fstab                       # delete the line
+sudo findmnt --verify
+
+# 2. Then work down the stack
+sudo lvremove /dev/vg01/lv_data
+sudo vgremove vg01
+sudo pvremove /dev/sdb1
+```
+
+**Removal is strictly bottom-up-blocked**: you cannot remove a VG containing LVs, or a PV belonging to a VG. LVM refuses with a clear message, which is helpful.
+
+**And the `/etc/fstab` entry must go first**, or the next boot drops to emergency mode looking for a device that no longer exists. Same rule as `28-disks-partitions.md`.
+
+To take a PV out of a VG that still has other PVs:
+
+```bash
+sudo pvs -o +pv_used                      # is anything on it?
+sudo pvmove /dev/sdc1                     # migrate extents elsewhere
+sudo vgreduce vg01 /dev/sdc1
+sudo pvremove /dev/sdc1
+```
+
+**`pvmove` before `vgreduce`** if the PV holds any extents, or you lose the data on it.
+
+### Inspecting everything
+
+```bash
+sudo pvs; sudo vgs; sudo lvs              # the three-command summary
+sudo lvs -o +devices                      # which PVs each LV uses
+sudo vgs -o +vg_free_count                # free extents
+sudo pvdisplay; sudo vgdisplay; sudo lvdisplay
+sudo lvmdiskscan
+lsblk
+sudo dmsetup ls
+sudo dmsetup info
+```
+
+```bash
+# One-liner overview
+lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
+```
+
+```text
+NAME            SIZE TYPE FSTYPE      MOUNTPOINTS
+sda              20G disk
+├─sda1            1G part xfs         /boot
+└─sda2           19G part LVM2_member
+  ├─rhel-root    17G lvm  xfs         /
+  └─rhel-swap     2G lvm  swap        [SWAP]
+sdb               2G disk
+└─sdb1         1020M part LVM2_member
+  └─vg01-lv_data 512M lvm  xfs        /data
+```
+
+**`lsblk` shows the whole stack in one view**, which is why it is the fastest sanity check.
+
+### The complete workflow, start to finish
+
+```bash
+# 1. Partition a disk with type lvm (28-disks-partitions.md)
+lsblk
+sudo fdisk /dev/sdb          # n, Enter, Enter, +1G, t, lvm, w
+sudo partprobe /dev/sdb
+lsblk /dev/sdb
+
+# 2. PV
+sudo pvcreate /dev/sdb1
+sudo pvs
+
+# 3. VG
+sudo vgcreate vg01 /dev/sdb1
+sudo vgs
+
+# 4. LV
+sudo lvcreate -n lv_data -L 500M vg01
+sudo lvs
+
+# 5. Filesystem
+sudo mkfs.xfs /dev/vg01/lv_data
+
+# 6. Mount point and mount
+sudo mkdir -p /data
+sudo mount /dev/vg01/lv_data /data
+
+# 7. PERSIST — the step that scores
+sudo blkid /dev/vg01/lv_data
+echo "UUID=$(sudo blkid -s UUID -o value /dev/vg01/lv_data)  /data  xfs  defaults  0 0" | sudo tee -a /etc/fstab
+sudo findmnt --verify
+sudo mount -a
+
+# 8. Verify
+df -hT /data
+lsblk
+```
+
+**Eight steps. Step 7 is the one people forget, and it is where the marks are.**
+
+### Snapshots
+
+Not a listed objective, but easy and occasionally useful:
+
+```bash
+sudo lvcreate -s -n lv_data_snap -L 200M /dev/vg01/lv_data
+sudo lvs
+sudo mount -o ro /dev/vg01/lv_data_snap /mnt
+sudo umount /mnt
+sudo lvconvert --merge /dev/vg01/lv_data_snap     # roll back to the snapshot
+sudo lvremove /dev/vg01/lv_data_snap
+```
+
+**A snapshot fills up as the origin changes, and becomes invalid when full.** Size it for the expected rate of change.
 
 ## Exam Tips
 

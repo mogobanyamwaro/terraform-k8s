@@ -2,254 +2,307 @@
 
 **Objectives:** Identify CPU/memory intensive processes and kill processes. Adjust process scheduling.
 
-## Concept Refresher
+Process management is how you answer "which process is hogging the CPU?" and "make it stop" on the exam. The two commands you will type most are `ps aux --sort=-%cpu` and `kill` — everything else supports those.
 
-### Listing processes
+## Before You Start
+
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
-ps                        # your processes in this terminal only
-ps -e                     # every process
-ps -ef                    # every process, full format
-ps aux                    # BSD style: every process with CPU and memory columns
-ps -ely                   # includes the nice value and state
-
-ps aux --sort=-%cpu       # sorted by CPU, highest first
-ps aux --sort=-%mem       # sorted by memory, highest first
-ps -eo pid,ppid,ni,pri,%cpu,%mem,stat,user,comm --sort=-%cpu
-
-ps -u alice               # processes owned by alice
-ps -C httpd               # by command name
-ps -p 1234                # a specific PID
-ps -ef --forest           # tree view showing parent/child
-ps -eLf                   # include threads
+vagrant ssh server1    # or ssh into your practice VM
 ```
 
-The two you will actually type: **`ps aux --sort=-%cpu`** and **`ps aux --sort=-%mem`**. Those directly answer "identify the CPU-intensive process" and "identify the memory-intensive process".
+**How to use this file:**
 
-Reading `ps aux` columns:
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
 
-```text
-USER  PID  %CPU  %MEM    VSZ   RSS TTY  STAT START TIME COMMAND
-root  892   0.3   1.2 234567 24680 ?    Ss   10:15 0:04 /usr/sbin/httpd
-                          │      │      │
-                          │      │      └─ process state
-                          │      └──────── RESIDENT memory: actual RAM used
-                          └─────────────── VIRTUAL memory: address space reserved
+Nice values go up when priority goes down — counter-intuitive by design, and examinable.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. List processes with `ps aux`
+
+```bash
+ps aux | head -6
 ```
+
+**You should see** a header row plus five processes, with columns for USER, PID, %CPU, %MEM, VSZ, RSS, STAT, and COMMAND.
+
+`ps aux` shows **every** process on the system in BSD style. The two you will actually type under time pressure are sorted variants — coming next.
+
+### 2. Find the CPU hogs
+
+```bash
+ps aux --sort=-%cpu | head -6
+```
+
+**You should see** the same header, then processes ranked by CPU usage, highest first.
+
+The `-` in `--sort=-%cpu` means **descending**. Without it you get the least busy processes first — wrong for this question.
+
+### 3. Find the memory hogs — read RSS, not VSZ
+
+```bash
+ps aux --sort=-%mem | head -6
+ps -eo pid,rss,%mem,comm --sort=-rss | head -6
+```
+
+**You should see** processes ranked by memory. The second command shows **RSS** in kilobytes — actual RAM in use.
 
 **`RSS` is the number that matters for real memory use.** `VSZ` includes address space that is mapped but not resident, so it is often misleadingly large.
 
-Process states (`STAT`):
+### 4. Read process states
+
+```bash
+ps -eo pid,stat,comm | head -10
+```
+
+**You should see** single-letter states like `S`, `R`, and possibly `I`.
 
 | Code | Meaning |
 | --- | --- |
 | **`R`** | Running or runnable |
-| **`S`** | Interruptible sleep, waiting for an event |
-| **`D`** | **Uninterruptible sleep**, usually blocked on I/O. Cannot be killed |
-| **`Z`** | **Zombie**: finished, but the parent has not reaped it |
-| `T` | Stopped |
-| `I` | Idle kernel thread |
+| **`S`** | Interruptible sleep |
+| **`D`** | **Uninterruptible sleep** — blocked on I/O, **cannot be killed** |
+| **`Z`** | **Zombie** — finished, parent has not reaped it |
 
-Modifiers: `s` session leader, `l` multi-threaded, `+` in the foreground process group, `<` high priority, `N` low priority.
+If `kill -9` does nothing, check the state. A `D`-state process is stuck in the kernel.
 
-**A `D`-state process cannot be killed, not even with `-9`.** It is waiting on the kernel. That is a real diagnostic fact: if `kill -9` does nothing, check the state.
-
-**A zombie cannot be killed either**, because it is already dead. You kill or restart its **parent** so the parent reaps it.
-
-### Interactive monitors
+### 5. Use `top` interactively
 
 ```bash
 top
 ```
 
-Keys inside `top`:
+Press **`P`** to sort by CPU, **`M`** by memory, then **`q`** to quit.
 
-| Key | Action |
-| --- | --- |
-| **`P`** | Sort by **CPU** |
-| **`M`** | Sort by **Memory** |
-| `T` | Sort by cumulative time |
-| `N` | Sort by PID |
-| **`k`** | **Kill** a process (prompts for PID and signal) |
-| **`r`** | **Renice** a process |
-| `u` | Filter by user |
-| `1` | Show individual CPU cores |
-| `c` | Toggle full command line |
-| `H` | Show threads |
-| `z` | Colour |
-| `W` | Write your settings to `~/.toprc` |
-| **`q`** | Quit |
+**You should see** the sort order change when you press `P` and `M`.
 
-`P` and `M` are the two to remember, plus `k` and `r` which let you fix things without leaving `top`.
+Inside `top`: **`P`** CPU, **`M`** memory, **`k`** kill, **`r`** renice, **`q`** quit. `htop` is friendlier but is **not installed by default** — do not rely on it.
+
+For a one-shot snapshot:
 
 ```bash
-top -b -n1 | head -20             # batch mode: one snapshot, scriptable
-top -u alice                      # one user
-top -p 1234                       # one PID
+top -b -n1 | head -20
 ```
 
-`htop` is friendlier but is **not installed by default** — do not rely on it.
-
-### Load average and memory
+### 6. Check load average and CPU count
 
 ```bash
-uptime                            # load averages over 1, 5, 15 minutes
-cat /proc/loadavg
-nproc                             # how many CPUs, for interpreting load
-
-free -h                           # memory, human readable
-free -m
-vmstat 1 5                        # 5 samples, 1 second apart
-iostat                            # disk I/O (needs sysstat)
-sar -u 1 3                        # CPU history (needs sysstat)
+uptime
+nproc
 ```
 
-Interpreting load average: a load of 4.0 on a 4-CPU system means fully busy but not backed up. Compare against `nproc`.
+**You should see** three load numbers (1-, 5-, 15-minute averages) and an integer CPU count.
 
-Reading `free -h`: the **`available`** column is what matters, not `free`. Linux deliberately uses spare RAM for cache, so a small `free` value is normal and healthy.
+Compare load to `nproc`: load equal to the CPU count means fully busy; sustained load well above it means processes are queuing.
 
-### Signals and killing
+### 7. Read memory with `free`
 
 ```bash
-kill 1234                    # sends SIGTERM (15) — polite request to exit
-kill -15 1234                # the same, explicit
-kill -TERM 1234              # the same, by name
-kill -9 1234                 # SIGKILL — cannot be caught. LAST RESORT
-kill -HUP 1234               # SIGHUP (1) — many daemons reload config
-kill -l                      # list all signal names
-
-killall httpd                # by process NAME, all matches
-killall -9 httpd
-killall -u alice             # every process owned by alice
-
-pkill httpd                  # by name pattern
-pkill -u alice               # by user
-pkill -9 -f "python myapp"   # -f matches the FULL command line
-pgrep httpd                  # find PIDs by name
-pgrep -a httpd               # PIDs with the command line
-pgrep -u alice               # by user
-pgrep -l -f python           # list matching processes
-
-pidof httpd                  # PIDs of a named binary
+free -h
 ```
 
-The signals worth knowing:
+**You should see** columns including `total`, `used`, `free`, and **`available`**.
 
-| Signal | Number | Effect | Catchable |
-| --- | --: | --- | --- |
-| **SIGHUP** | **1** | Hang up. Many daemons **reload configuration** | Yes |
-| SIGINT | 2 | Interrupt, as from `Ctrl+c` | Yes |
-| SIGQUIT | 3 | Quit with a core dump | Yes |
-| **SIGKILL** | **9** | **Immediate termination. Cannot be caught or ignored** | **No** |
-| **SIGTERM** | **15** | **Polite termination request. The default** | Yes |
-| SIGCONT | 18 | Continue a stopped process | |
-| SIGSTOP | 19 | Stop. Cannot be caught | **No** |
-| SIGTSTP | 20 | Stop from the terminal, as from `Ctrl+z` | Yes |
+In `free -h`, read the **`available`** column, not `free`. Linux deliberately uses spare RAM for cache, so a small `free` value is normal and healthy.
 
-**Always try SIGTERM (15) first.** It lets the process flush buffers and clean up. `-9` gives it no chance and can leave lock files, partial writes, and orphaned children behind. A task that says "terminate the process" means SIGTERM; only use `-9` if it refuses.
-
-**`pkill -f` matters** when the process name is generic. `pkill python` kills every Python process; `pkill -f "python myapp.py"` kills only the one you meant.
-
-### Job control
+### 8. Kill politely with SIGTERM
 
 ```bash
-command &                    # run in the background
-jobs                         # list this shell's jobs
-jobs -l                      # with PIDs
-fg                           # bring the most recent job to the foreground
-fg %2                        # bring job 2 forward
-bg %1                        # resume job 1 in the background
-Ctrl+z                       # suspend the foreground job
-Ctrl+c                       # terminate the foreground job
-
-nohup command &              # survive logout, output to nohup.out
-disown %1                    # detach a job from this shell
+sleep 900 &
+echo $!
+kill $!
+pgrep sleep
 ```
 
-For anything that must genuinely outlive your session, `systemd-run` is the modern approach:
+**You should see** a PID from `echo $!`, then no `sleep` processes after `kill`.
+
+`kill` with no signal sends **SIGTERM (15)** — a polite request to exit. Always try this first.
+
+### 9. Kill by name with `pkill` and `killall`
 
 ```bash
-sudo systemd-run --unit=mytask sleep 3600
-systemctl status mytask
+sleep 900 & sleep 901 &
+pgrep -a sleep
+pkill sleep
+pgrep sleep
 ```
 
-### Nice and renice
+**You should see** two sleeps listed, then nothing after `pkill`.
 
-**Nice values run from -20 (highest priority) to +19 (lowest).** Default is 0.
+`pkill` matches a pattern; `killall` requires an exact command name. Both send SIGTERM by default. Use **`pkill -f`** when the process name is generic — it matches the full command line.
+
+### 10. Start a process with low priority — `nice`
 
 ```bash
-nice command                       # start with nice +10 (the default increment)
-nice -n 10 command                 # start with nice +10
-nice -n -5 command                 # HIGHER priority — requires root
-nice -n 19 tar -czf big.tar.gz /   # be maximally polite
-
-renice -n 10 -p 1234               # change a running process
-renice -n 10 1234                  # older syntax, same effect
-renice -n -5 -p 1234               # raise priority — requires root
-renice -n 10 -u alice              # every process owned by alice
-renice -n 10 -g devs               # every process in a group
+nice -n 19 sleep 900 &
+ps -eo pid,ni,comm | grep sleep
 ```
 
-**Only root can lower a nice value** (that is, raise priority). A regular user can only be more polite, never less, and cannot undo their own politeness.
+**You should see** `NI` of **19** — the lowest priority (most polite).
+
+Nice values run from **-20 (highest priority) to +19 (lowest)**. Default is 0. A *higher* nice number means a *lower* priority — a common exam trap.
+
+### 11. Change priority on a running process — `renice`
 
 ```bash
-$ renice -n -5 -p 1234
-renice: failed to set priority for 1234 (process ID): Permission denied
+sleep 900 &
+PID=$!
+renice -n 15 -p $PID
+ps -eo pid,ni,comm -p $PID
 ```
 
-Checking nice values:
+**You should see** `NI` change to 15. Increasing niceness (lowering priority) does **not** require root when done by the process owner.
 
 ```bash
-ps -eo pid,ni,pri,comm | head
-ps -l                              # NI column
-top                                # NI column
-ps -eo pid,ni,comm --sort=-ni      # least-favoured processes first
+kill $PID
 ```
 
-Note the difference between `NI` (the nice value you set, -20..19) and `PRI` (the kernel's computed priority). You control `NI`; the scheduler derives `PRI`.
-
-### Real-time scheduling, briefly
-
-Beyond RHCSA scope but recognise the tool:
+### 12. Only root can raise priority
 
 ```bash
-chrt -p 1234                       # show scheduling policy
-chrt -f -p 50 1234                 # SCHED_FIFO
+sleep 900 &
+PID=$!
+renice -n -5 -p $PID
 ```
 
-## Tasks
+**You should see** `Permission denied`.
+
+**Only root can lower a nice value** (raise priority). With sudo it succeeds:
+
+```bash
+sudo renice -n -5 -p $PID
+ps -eo pid,ni,comm -p $PID
+kill $PID
+```
+
+### 13. Find PIDs three ways
+
+```bash
+pgrep sshd
+pidof sshd
+ps -C sshd -o pid,comm
+```
+
+**You should see** one or more PIDs for the SSH daemon from each command.
+
+For a systemd-managed service, `systemctl show -p MainPID sshd` gives the main process rather than every child.
+
+### 14. Reload a daemon without restarting it
+
+```bash
+systemctl show -p CanReload --value rsyslog
+sudo systemctl reload rsyslog
+```
+
+**You should see** `yes` for CanReload, and the reload completes without error.
+
+**SIGHUP (signal 1)** makes most daemons reload configuration. `systemctl reload` is preferred because the unit file knows the correct mechanism. Verify the PID did not change — that proves it was not restarted.
+
+### 15. Job control and surviving logout
+
+```bash
+nohup sleep 60 &
+jobs -l
+disown
+```
+
+**You should see** the job listed with a PID. `nohup` makes the process ignore SIGHUP on logout.
+
+For anything that must genuinely outlive your session, `systemd-run` is the modern approach — but for reboot-surviving work you need a **systemd unit** (`14-systemd-services.md`), not `nohup`.
+
+```bash
+pkill sleep
+```
+
+### Mini checkpoint
+
+Before the practice tasks, you should be able to explain:
+
+| Signal | Number | When to use |
+| --- | --: | --- |
+| SIGHUP | 1 | Reload config |
+| SIGKILL | 9 | Last resort — uncatchable |
+| SIGTERM | 15 | Default — polite termination |
+
+And the nice range: **-20 (highest) to +19 (lowest), default 0**.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Display the five processes consuming the most CPU.
 
+> Hint: `ps aux --sort=-%cpu | head -6` — the header line counts as one row.
+
 **Task 2.** Display the five processes consuming the most memory, showing resident memory.
+
+> Hint: `--sort=-%mem` or `--sort=-rss`; RSS is actual RAM, not VSZ.
 
 **Task 3.** Start a background process that consumes CPU, find its PID, and terminate it politely.
 
+> Hint: `yes > /dev/null &` and `$!`; `kill` with no flag sends SIGTERM.
+
 **Task 4.** Start `sleep 900` in the background, then kill it using its name rather than its PID.
+
+> Hint: `pkill sleep` or `killall sleep`.
 
 **Task 5.** Start three `sleep` processes, then terminate all of them with a single command.
 
+> Hint: one `pkill sleep` matches every instance.
+
 **Task 6.** Start a process with the lowest possible scheduling priority.
+
+> Hint: `nice -n 19 command` — highest nice number, lowest priority.
 
 **Task 7.** Start `sleep 900`, then change its nice value to 15 while it is running.
 
+> Hint: `renice -n 15 -p PID`.
+
 **Task 8.** As a regular user, attempt to raise a process's priority to -5 and record what happens.
+
+> Hint: `renice -n -5` without sudo — expect `Permission denied`.
 
 **Task 9.** Show the current nice value of every process owned by user `alice`.
 
+> Hint: `ps -u alice -o pid,ni,pri,comm`.
+
 **Task 10.** Find the PID of the `sshd` process using three different commands.
+
+> Hint: `pgrep`, `pidof`, and `ps -C` — follow-along step 13.
 
 **Task 11.** Send a SIGHUP to the `rsyslog` service so it reloads its configuration, without restarting it.
 
+> Hint: `systemctl reload rsyslog` or `kill -HUP` / `pkill -HUP`.
+
 **Task 12.** Display the system load averages and state whether the system is overloaded, given its CPU count.
+
+> Hint: `uptime` and `nproc` — compare load to CPU count.
 
 **Task 13.** Identify any zombie processes on the system and explain how you would remove one.
 
+> Hint: `ps` with `STAT` containing `Z`; kill the **parent**, not the zombie.
+
 **Task 14.** Start a long-running command that will survive you logging out.
+
+> Hint: `nohup command &` or `systemd-run --unit=...`.
 
 **Task 15.** Kill every process owned by user `alice`.
 
+> Hint: `pkill -u alice` or `killall -u alice`.
+
 **Task 16.** A process named `runaway` is consuming all CPU and does not respond to a termination request. Demonstrate the escalation you would use.
+
+> Hint: SIGTERM first, then `-9`; if still there, check `STAT` for `D` (uninterruptible).
 
 ---
 
@@ -607,6 +660,223 @@ Note also that a nice value set in a unit file **does** persist, because it is c
 # /etc/systemd/system/myapp.service
 [Service]
 Nice=10
+```
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### Listing processes
+
+```bash
+ps                        # your processes in this terminal only
+ps -e                     # every process
+ps -ef                    # every process, full format
+ps aux                    # BSD style: every process with CPU and memory columns
+ps -ely                   # includes the nice value and state
+
+ps aux --sort=-%cpu       # sorted by CPU, highest first
+ps aux --sort=-%mem       # sorted by memory, highest first
+ps -eo pid,ppid,ni,pri,%cpu,%mem,stat,user,comm --sort=-%cpu
+
+ps -u alice               # processes owned by alice
+ps -C httpd               # by command name
+ps -p 1234                # a specific PID
+ps -ef --forest           # tree view showing parent/child
+ps -eLf                   # include threads
+```
+
+The two you will actually type: **`ps aux --sort=-%cpu`** and **`ps aux --sort=-%mem`**. Those directly answer "identify the CPU-intensive process" and "identify the memory-intensive process".
+
+Reading `ps aux` columns:
+
+```text
+USER  PID  %CPU  %MEM    VSZ   RSS TTY  STAT START TIME COMMAND
+root  892   0.3   1.2 234567 24680 ?    Ss   10:15 0:04 /usr/sbin/httpd
+                          │      │      │
+                          │      │      └─ process state
+                          │      └──────── RESIDENT memory: actual RAM used
+                          └─────────────── VIRTUAL memory: address space reserved
+```
+
+**`RSS` is the number that matters for real memory use.** `VSZ` includes address space that is mapped but not resident, so it is often misleadingly large.
+
+Process states (`STAT`):
+
+| Code | Meaning |
+| --- | --- |
+| **`R`** | Running or runnable |
+| **`S`** | Interruptible sleep, waiting for an event |
+| **`D`** | **Uninterruptible sleep**, usually blocked on I/O. Cannot be killed |
+| **`Z`** | **Zombie**: finished, but the parent has not reaped it |
+| `T` | Stopped |
+| `I` | Idle kernel thread |
+
+Modifiers: `s` session leader, `l` multi-threaded, `+` in the foreground process group, `<` high priority, `N` low priority.
+
+**A `D`-state process cannot be killed, not even with `-9`.** It is waiting on the kernel. That is a real diagnostic fact: if `kill -9` does nothing, check the state.
+
+**A zombie cannot be killed either**, because it is already dead. You kill or restart its **parent** so the parent reaps it.
+
+### Interactive monitors
+
+```bash
+top
+```
+
+Keys inside `top`:
+
+| Key | Action |
+| --- | --- |
+| **`P`** | Sort by **CPU** |
+| **`M`** | Sort by **Memory** |
+| `T` | Sort by cumulative time |
+| `N` | Sort by PID |
+| **`k`** | **Kill** a process (prompts for PID and signal) |
+| **`r`** | **Renice** a process |
+| `u` | Filter by user |
+| `1` | Show individual CPU cores |
+| `c` | Toggle full command line |
+| `H` | Show threads |
+| `z` | Colour |
+| `W` | Write your settings to `~/.toprc` |
+| **`q`** | Quit |
+
+`P` and `M` are the two to remember, plus `k` and `r` which let you fix things without leaving `top`.
+
+```bash
+top -b -n1 | head -20             # batch mode: one snapshot, scriptable
+top -u alice                      # one user
+top -p 1234                       # one PID
+```
+
+`htop` is friendlier but is **not installed by default** — do not rely on it.
+
+### Load average and memory
+
+```bash
+uptime                            # load averages over 1, 5, 15 minutes
+cat /proc/loadavg
+nproc                             # how many CPUs, for interpreting load
+
+free -h                           # memory, human readable
+free -m
+vmstat 1 5                        # 5 samples, 1 second apart
+iostat                            # disk I/O (needs sysstat)
+sar -u 1 3                        # CPU history (needs sysstat)
+```
+
+Interpreting load average: a load of 4.0 on a 4-CPU system means fully busy but not backed up. Compare against `nproc`.
+
+Reading `free -h`: the **`available`** column is what matters, not `free`. Linux deliberately uses spare RAM for cache, so a small `free` value is normal and healthy.
+
+### Signals and killing
+
+```bash
+kill 1234                    # sends SIGTERM (15) — polite request to exit
+kill -15 1234                # the same, explicit
+kill -TERM 1234              # the same, by name
+kill -9 1234                 # SIGKILL — cannot be caught. LAST RESORT
+kill -HUP 1234               # SIGHUP (1) — many daemons reload config
+kill -l                      # list all signal names
+
+killall httpd                # by process NAME, all matches
+killall -9 httpd
+killall -u alice             # every process owned by alice
+
+pkill httpd                  # by name pattern
+pkill -u alice               # by user
+pkill -9 -f "python myapp"   # -f matches the FULL command line
+pgrep httpd                  # find PIDs by name
+pgrep -a httpd               # PIDs with the command line
+pgrep -u alice               # by user
+pgrep -l -f python           # list matching processes
+
+pidof httpd                  # PIDs of a named binary
+```
+
+The signals worth knowing:
+
+| Signal | Number | Effect | Catchable |
+| --- | --: | --- | --- |
+| **SIGHUP** | **1** | Hang up. Many daemons **reload configuration** | Yes |
+| SIGINT | 2 | Interrupt, as from `Ctrl+c` | Yes |
+| SIGQUIT | 3 | Quit with a core dump | Yes |
+| **SIGKILL** | **9** | **Immediate termination. Cannot be caught or ignored** | **No** |
+| **SIGTERM** | **15** | **Polite termination request. The default** | Yes |
+| SIGCONT | 18 | Continue a stopped process | |
+| SIGSTOP | 19 | Stop. Cannot be caught | **No** |
+| SIGTSTP | 20 | Stop from the terminal, as from `Ctrl+z` | Yes |
+
+**Always try SIGTERM (15) first.** It lets the process flush buffers and clean up. `-9` gives it no chance and can leave lock files, partial writes, and orphaned children behind. A task that says "terminate the process" means SIGTERM; only use `-9` if it refuses.
+
+**`pkill -f` matters** when the process name is generic. `pkill python` kills every Python process; `pkill -f "python myapp.py"` kills only the one you meant.
+
+### Job control
+
+```bash
+command &                    # run in the background
+jobs                         # list this shell's jobs
+jobs -l                      # with PIDs
+fg                           # bring the most recent job to the foreground
+fg %2                        # bring job 2 forward
+bg %1                        # resume job 1 in the background
+Ctrl+z                       # suspend the foreground job
+Ctrl+c                       # terminate the foreground job
+
+nohup command &              # survive logout, output to nohup.out
+disown %1                    # detach a job from this shell
+```
+
+For anything that must genuinely outlive your session, `systemd-run` is the modern approach:
+
+```bash
+sudo systemd-run --unit=mytask sleep 3600
+systemctl status mytask
+```
+
+### Nice and renice
+
+**Nice values run from -20 (highest priority) to +19 (lowest).** Default is 0.
+
+```bash
+nice command                       # start with nice +10 (the default increment)
+nice -n 10 command                 # start with nice +10
+nice -n -5 command                 # HIGHER priority — requires root
+nice -n 19 tar -czf big.tar.gz /   # be maximally polite
+
+renice -n 10 -p 1234               # change a running process
+renice -n 10 1234                  # older syntax, same effect
+renice -n -5 -p 1234               # raise priority — requires root
+renice -n 10 -u alice              # every process owned by alice
+renice -n 10 -g devs               # every process in a group
+```
+
+**Only root can lower a nice value** (that is, raise priority). A regular user can only be more polite, never less, and cannot undo their own politeness.
+
+```bash
+$ renice -n -5 -p 1234
+renice: failed to set priority for 1234 (process ID): Permission denied
+```
+
+Checking nice values:
+
+```bash
+ps -eo pid,ni,pri,comm | head
+ps -l                              # NI column
+top                                # NI column
+ps -eo pid,ni,comm --sort=-ni      # least-favoured processes first
+```
+
+Note the difference between `NI` (the nice value you set, -20..19) and `PRI` (the kernel's computed priority). You control `NI`; the scheduler derives `PRI`.
+
+### Real-time scheduling, briefly
+
+Beyond RHCSA scope but recognise the tool:
+
+```bash
+chrt -p 1234                       # show scheduling policy
+chrt -f -p 50 1234                 # SCHED_FIFO
 ```
 
 ## Exam Tips

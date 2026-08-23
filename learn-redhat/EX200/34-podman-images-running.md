@@ -9,16 +9,46 @@
 
 **A note on whether this is examinable.** Containers appeared in the RHEL 8 and RHEL 9 RHCSA objectives. Red Hat's published RHEL 10 objective list has varied on this point, and different sources disagree. **Prepare it.** It is a small number of commands, it overlaps heavily with systemd and SELinux, and being wrong about its absence is far more expensive than the hour it takes to learn.
 
-## Concept Refresher
+## Before You Start
 
-### Podman versus Docker
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
+
+```bash
+vagrant ssh server1    # or ssh into your practice VM
+```
+
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+Reading twenty podman flags upfront feels like learning. Typing them one at a time actually is.
+
+---
+
+## Follow Along
+
+Work on your lab VM as your regular user (rootless podman). After each step, compare your output to **You should see**.
+
+### 1. Install container tools and confirm podman
+
+Podman is RHEL's supported container tool — no daemon, fork/exec model, Docker-compatible syntax.
 
 ```bash
 sudo dnf install -y container-tools
-# or
-sudo dnf install -y podman skopeo buildah
 podman --version
+skopeo --version
 ```
+
+Or install individually:
+
+```bash
+sudo dnf install -y podman skopeo buildah
+rpm -q podman skopeo buildah
+```
+
+**You should see** version strings for podman and skopeo (for example `podman version 5.x` and `skopeo version 1.x`). `alias docker=podman` works because the command syntax is deliberately compatible.
 
 | | Docker | **Podman** |
 | --- | --- | --- |
@@ -28,17 +58,27 @@ podman --version
 | Command syntax | `docker run` | **`podman run` — identical** |
 | Available on RHEL 9/10 | No | **Yes, the supported tool** |
 
-**The command syntax is deliberately compatible**, so Docker knowledge transfers directly. `alias docker=podman` works.
-
-**Podman has no daemon.** A container is a child process of the `podman` command that started it, which is why systemd integration matters so much — without a unit, nothing restarts your container at boot.
-
-### Rootless and rootful
+### 2. Confirm rootless mode and separate storage
 
 ```bash
 podman info | grep -i rootless
 podman info --format '{{.Host.Security.Rootless}}'
 whoami
+podman info --format '{{.Store.GraphRoot}}'
 ```
+
+**You should see** `rootless: true` and a graph root under your home directory, such as `/home/you/.local/share/containers/storage`.
+
+Compare with rootful:
+
+```bash
+sudo podman info --format '{{.Host.Security.Rootless}}'
+sudo podman info --format '{{.Store.GraphRoot}}'
+```
+
+**You should see** `false` and `/var/lib/containers/storage`.
+
+**`sudo podman ps` and `podman ps` show completely different worlds.** An image pulled as your user is invisible to root, and vice versa.
 
 | | Rootless (`podman` as a user) | Rootful (`sudo podman`) |
 | --- | --- | --- |
@@ -48,29 +88,22 @@ whoami
 | systemd units | **`~/.config/systemd/user/`** | `/etc/systemd/system/` |
 | Survives logout | **Only with `loginctl enable-linger`** | Yes |
 
-**`sudo podman ps` and `podman ps` show completely different worlds.** An image pulled as your user is invisible to root, and vice versa. This is the single most confusing thing about podman for newcomers.
-
 ```bash
-podman images                    # your images
-sudo podman images               # root's images — a different set
+podman images
+sudo podman images
 ```
 
-**Read the task carefully.** "As the user `alice`, run a container" means rootless, as alice. Anything about a system service usually means rootful, or rootless with lingering enabled — see `35-containers-systemd.md`.
+**You should see** two separate image lists — often one is empty if you have only pulled as one user.
 
-### Registries
+### 3. Examine registry configuration
 
 ```bash
 cat /etc/containers/registries.conf
 grep -v '^#' /etc/containers/registries.conf | grep -v '^$'
-```
-
-```ini
-unqualified-search-registries = ["registry.access.redhat.com", "registry.redhat.io", "docker.io"]
-```
-
-```bash
 podman info | grep -A5 -i registries
 ```
+
+**You should see** `unqualified-search-registries` listing registries such as `registry.access.redhat.com`, `registry.redhat.io`, and `docker.io`.
 
 | Registry | Content |
 | --- | --- |
@@ -79,50 +112,34 @@ podman info | grep -A5 -i registries
 | `docker.io` | Docker Hub |
 | `quay.io` | Red Hat's Quay |
 
+**Always use the fully qualified image name.** `podman pull nginx` depends on the search list; `podman pull docker.io/library/nginx:latest` is unambiguous.
+
+Login where required:
+
 ```bash
 podman login registry.redhat.io
-podman login -u username registry.redhat.io
 podman logout registry.redhat.io
-cat ${XDG_RUNTIME_DIR}/containers/auth.json
 ```
 
-Adding a registry — use a drop-in:
+**You should see** login succeed or "Login Succeeded" when credentials are valid. Credentials are stored in `${XDG_RUNTIME_DIR}/containers/auth.json`.
 
-```bash
-sudo tee /etc/containers/registries.conf.d/99-local.conf >/dev/null <<'EOF'
-[[registry]]
-location = "registry.lab.example.com:5000"
-insecure = true
-EOF
-podman info | grep -A10 -i registries
-```
-
-**Always use the fully qualified image name.** `podman pull nginx` depends on the search list; `podman pull docker.io/library/nginx:latest` is unambiguous:
-
-```bash
-podman pull registry.access.redhat.com/ubi9/httpd-24
-podman pull docker.io/library/nginx:latest
-```
-
-### Finding and pulling images
+### 4. Search for and pull an image
 
 ```bash
 podman search httpd
 podman search --limit 5 nginx
-podman search registry.access.redhat.com/ubi
 podman search --list-tags registry.access.redhat.com/ubi9/httpd-24
 
 podman pull registry.access.redhat.com/ubi9/httpd-24
 podman pull registry.access.redhat.com/ubi9/ubi:latest
-podman pull docker.io/library/mariadb:10.5
 
 podman images
 podman images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
-podman image ls
 ```
 
+**You should see** search results listing Red Hat and Docker Hub images, then pull progress, then the image in `podman images` with its size and ID.
+
 ```text
-$ podman images
 REPOSITORY                                    TAG      IMAGE ID      CREATED       SIZE
 registry.access.redhat.com/ubi9/httpd-24      latest   3f8a2b91c4d5  2 weeks ago   462 MB
 registry.access.redhat.com/ubi9/ubi           latest   a1b2c3d4e5f6  3 weeks ago   214 MB
@@ -130,45 +147,45 @@ registry.access.redhat.com/ubi9/ubi           latest   a1b2c3d4e5f6  3 weeks ago
 
 **`podman search` needs network access, which the exam does not have.** Expect a local registry or pre-pulled images. Practise the syntax; do not count on Docker Hub.
 
-### Inspecting images
-
-```bash
-podman inspect registry.access.redhat.com/ubi9/httpd-24
-podman inspect --format '{{.Config.Cmd}}' <image>
-podman inspect --format '{{.Config.ExposedPorts}}' <image>
-podman inspect --format '{{.Config.Env}}' <image>
-podman inspect --format '{{.Config.Volumes}}' <image>
-podman image inspect <image> | less
-
-podman history <image>
-podman image tree <image> 2>/dev/null
-```
-
-**`skopeo` inspects an image without downloading it:**
+### 5. Inspect a remote image without pulling (skopeo)
 
 ```bash
 skopeo inspect docker://registry.access.redhat.com/ubi9/httpd-24
-skopeo inspect --config docker://registry.access.redhat.com/ubi9/ubi
-skopeo list-tags docker://registry.access.redhat.com/ubi9/ubi
-skopeo copy docker://registry.access.redhat.com/ubi9/ubi dir:/tmp/ubi
-skopeo copy docker://src-registry/img docker://dst-registry/img
+skopeo inspect --config docker://registry.access.redhat.com/ubi9/httpd-24 | head -30
+skopeo list-tags docker://registry.access.redhat.com/ubi9/httpd-24
 ```
 
-**The `docker://` transport prefix is required** for `skopeo`. Other transports: `dir:`, `containers-storage:`, `oci:`, `docker-archive:`.
+**You should see** JSON with image metadata — name, digest, tags, labels, and environment variables — without downloading the full image.
 
-**The objective names both `podman` and `skopeo`**, so know that `skopeo inspect` queries a registry without pulling, and `skopeo copy` moves images between registries.
+**The `docker://` transport prefix is required** for skopeo. Other transports: `dir:`, `containers-storage:`, `oci:`, `docker-archive:`.
 
-### Running containers
+| | `podman inspect` | **`skopeo inspect`** |
+| --- | --- | --- |
+| Target | **A LOCAL image or container** | **A REMOTE image in a registry** |
+| Must pull first | **Yes** | **No** |
+| Transport prefix | None | **`docker://` required** |
+
+Now inspect the local copy:
 
 ```bash
-podman run registry.access.redhat.com/ubi9/ubi echo "hello"
-podman run -it registry.access.redhat.com/ubi9/ubi /bin/bash
-podman run -d --name web registry.access.redhat.com/ubi9/httpd-24
-podman run -d --name web -p 8080:8080 <image>
-podman run -d --name web -e VAR=value <image>
-podman run -d --name web -v /host/path:/container/path:Z <image>
-podman run --rm <image> command                # remove when it exits
+podman inspect --format '{{.Config.Cmd}}' registry.access.redhat.com/ubi9/httpd-24
+podman inspect --format '{{.Config.ExposedPorts}}' registry.access.redhat.com/ubi9/httpd-24
+podman inspect --format '{{.Config.Volumes}}' registry.access.redhat.com/ubi9/httpd-24
+podman history registry.access.redhat.com/ubi9/httpd-24
 ```
+
+**You should see** the default command (`/usr/bin/run-httpd`), exposed ports (`8080/tcp`, `8443/tcp`), and layer history. Red Hat httpd images listen on **8080**, not 80.
+
+### 6. Run a one-shot container and a detached service
+
+```bash
+podman run --rm registry.access.redhat.com/ubi9/ubi cat /etc/os-release
+podman ps -a
+```
+
+**You should see** RHEL release information, then **nothing** in `podman ps -a` — `--rm` removes the container when it exits.
+
+Run flags that matter:
 
 | Flag | Meaning |
 | --- | --- |
@@ -179,96 +196,99 @@ podman run --rm <image> command                # remove when it exits
 | **`-e KEY=value`** | **An environment variable** |
 | `-it` | Interactive with a TTY |
 | `--rm` | Delete the container when it exits |
-| `-u` | Run as a given user |
-| `--restart=always` | Restart policy |
-| `--network` | Network mode |
+
+```bash
+podman run -d --name web -p 8080:8080 registry.access.redhat.com/ubi9/httpd-24
+podman ps
+```
+
+**You should see** container `web` in `Up` status with `0.0.0.0:8080->8080/tcp` in the PORTS column.
 
 **Always use `--name`.** Without it podman invents something like `nervous_einstein`, and every later command needs the ID.
 
-### Managing containers
+### 7. Check logs and execute commands inside the container
+
+```bash
+podman logs web
+podman logs --tail 20 web
+
+podman exec web cat /etc/os-release
+podman exec web id
+podman exec -it web /bin/bash
+```
+
+**You should see** httpd startup messages in the logs, and `uid=1001` from `podman exec web id` — the container runs unprivileged.
+
+Managing containers:
 
 ```bash
 podman ps                        # running
 podman ps -a                     # including stopped
-podman ps --format '{{.Names}} {{.Status}} {{.Ports}}'
-
 podman stop web
 podman start web
 podman restart web
-podman kill web
-podman rm web
-podman rm -f web                 # force-remove a running container
-podman rm -a                     # every stopped container
-
-podman logs web
-podman logs -f web
-podman logs --tail 20 web
-
-podman exec -it web /bin/bash
-podman exec web cat /etc/os-release
-podman inspect web
-podman top web
-podman stats --no-stream
-podman port web
-podman diff web
 ```
 
-```text
-$ podman ps
-CONTAINER ID  IMAGE                                     COMMAND     CREATED        STATUS        PORTS                   NAMES
-9c1b2d5a8f3e  registry.access.redhat.com/ubi9/httpd-24  /usr/bin... 2 minutes ago  Up 2 minutes  0.0.0.0:8080->8080/tcp  web
-```
+**You should see** status change from `Up` to `Exited` on stop, back to `Up` on start.
 
 **`podman logs NAME` is the first command when a container will not work.** It shows the application's own stdout and stderr.
 
-### Ports
+| Command | Effect |
+| --- | --- |
+| **`podman exec web CMD`** | **Runs `CMD` in the already-running `web`** |
+| `podman run <image> CMD` | **Creates a NEW container** |
+
+### 8. Publish ports and test connectivity
 
 ```bash
-podman run -d --name web -p 8080:8080 <image>
-podman run -d --name web -p 8080:80 <image>          # host 8080 → container 80
-podman run -d --name web -p 127.0.0.1:8080:8080 <image>
-podman run -d --name web -P <image>                  # publish all exposed ports
-
 podman port web
 curl http://localhost:8080
+curl -sI http://localhost:8080 | head -1
 ss -tlnp | grep 8080
 ```
 
+**You should see** `8080/tcp -> 0.0.0.0:8080`, an HTTP response (often `HTTP/1.1 200 OK`), and podman listening on port 8080.
+
 **Rootless podman cannot bind a host port below 1024:**
 
-```text
-Error: rootlessport cannot expose privileged port 80
+```bash
+podman rm -f web
+podman run -d --name web -p 80:8080 registry.access.redhat.com/ubi9/httpd-24
 ```
+
+**You should see** an error like `rootlessport cannot expose privileged port 80`.
+
+Fix with an unprivileged port:
 
 ```bash
-podman run -d -p 8080:8080 <image>                   # rootless: use 8080
-sudo podman run -d -p 80:8080 <image>                # rootful can use 80
+podman rm -f web 2>/dev/null
+podman run -d --name web -p 8080:8080 registry.access.redhat.com/ubi9/httpd-24
 ```
 
-**Remember the firewall** (`26-firewalld.md`). Publishing a port makes podman listen, but firewalld still blocks external access:
+**Remember the firewall** for remote access — publishing a port makes podman listen, but firewalld still blocks external access:
 
 ```bash
 sudo firewall-cmd --permanent --add-port=8080/tcp
 sudo firewall-cmd --reload
 ```
 
-### Persistent storage
+### 9. Serve custom content with a bind mount and `:Z`
 
-**Container filesystems are ephemeral.** `podman rm` destroys everything written inside. Two ways to persist data:
+Container filesystems are ephemeral. Bind-mount a host directory to persist content.
 
 ```bash
-# 1. Bind-mount a host directory
 mkdir -p ~/webcontent
-echo "hello" > ~/webcontent/index.html
-podman run -d --name web -v ~/webcontent:/var/www/html:Z <image>
+echo "<h1>hello from the host</h1>" > ~/webcontent/index.html
+ls -Zd ~/webcontent
 
-# 2. A named volume, managed by podman
-podman volume create webdata
-podman run -d --name web -v webdata:/var/www/html <image>
-podman volume ls
-podman volume inspect webdata
-podman volume rm webdata
+podman rm -f web 2>/dev/null
+podman run -d --name web   -p 8080:8080   -v ~/webcontent:/var/www/html:Z   registry.access.redhat.com/ubi9/httpd-24
+
+curl http://localhost:8080
+ls -Zd ~/webcontent
 ```
+
+**You should see** your HTML served, and the directory relabelled to `container_file_t`.
 
 **`:Z` on a bind mount is the most important detail in this entire file.**
 
@@ -280,108 +300,185 @@ podman volume rm webdata
 | `:rw` | Read-write (the default) |
 | **none** | **No relabelling — SELinux denies access** |
 
-```bash
-podman run -v ~/webcontent:/var/www/html <image>       # Permission denied inside
-podman run -v ~/webcontent:/var/www/html:Z <image>     # works
-ls -Zd ~/webcontent
-```
+Without `:Z`, the container gets "Permission denied" or HTTP 403 — a MAC denial, not a chmod problem.
 
-```text
-unconfined_u:object_r:container_file_t:s0:c123,c456 /home/douglas/webcontent
-```
-
-**`:Z` sets `container_file_t` on the host directory.** Without it, the host directory keeps a label the container process is not permitted to read, and the application inside fails with permission errors that look nothing like an SELinux problem. See `27-selinux.md`.
-
-**Rootless bind mounts also need UID mapping awareness.** Files created inside the container appear on the host owned by a high subordinate UID:
-
-```bash
-podman unshare chown -R 1001:1001 ~/webcontent
-ls -ln ~/webcontent
-```
-
-`podman unshare` runs a command inside the container's user namespace, which is how you set ownership that the container will see correctly.
-
-### Environment variables
+### 10. Pass environment variables to a container
 
 ```bash
 podman run -d --name db \
   -e MYSQL_ROOT_PASSWORD=secret \
   -e MYSQL_DATABASE=appdb \
-  -e MYSQL_USER=appuser \
-  -e MYSQL_PASSWORD=apppass \
-  registry.redhat.io/rhel9/mariadb-105
+  registry.redhat.io/rhel9/mariadb-105 2>/dev/null || echo "(skip if image unavailable)"
 
-podman exec db env
-podman inspect --format '{{.Config.Env}}' db
-podman run --env-file /root/db.env <image>
+podman exec db env 2>/dev/null | grep -i mysql || true
+podman inspect --format '{{.Config.Env}}' registry.access.redhat.com/ubi9/httpd-24
 ```
 
-**Read the image's documentation for the variables it needs.** `podman inspect --format '{{.Config.Env}}' <image>` shows the defaults, and Red Hat images have a `help` file:
+**You should see** environment variables listed for the running container (if the mariadb image is available), and default env vars from the httpd image inspect.
+
+**Read the image's documentation for the variables it needs:**
 
 ```bash
-podman run --rm <image> cat /help.1 2>/dev/null
-skopeo inspect docker://<image> | grep -i description
+podman run --rm registry.access.redhat.com/ubi9/httpd-24 cat /help.1 2>/dev/null | head -20
 ```
 
-### Where things live
+A container that exits immediately usually reports a missing environment variable in `podman logs`.
+
+### 11. Use a named volume for persistent storage
 
 ```bash
-# Rootless
+podman volume create webdata
+podman volume ls
+podman volume inspect webdata
+
+podman rm -f web 2>/dev/null
+podman run -d --name web -p 8080:8080 -v webdata:/var/www/html registry.access.redhat.com/ubi9/httpd-24
+podman exec web bash -c 'echo "<h1>volume data</h1>" > /var/www/html/index.html'
+curl http://localhost:8080
+
+podman rm -f web
+podman run -d --name web2 -p 8080:8080 -v webdata:/var/www/html registry.access.redhat.com/ubi9/httpd-24
+curl http://localhost:8080
+```
+
+**You should see** the same content after removing and recreating the container. A named volume is created with `container_file_t` already — **no `:Z` needed**.
+
+| | **Bind mount** | **Named volume** |
+| --- | --- | --- |
+| Location | **A path you choose** | Managed by podman |
+| SELinux | **Needs `:Z`** | **Correct automatically** |
+| Best for | **Content you edit on the host** | **Application data** |
+
+### 12. See where things live and check disk usage
+
+```bash
 ls ~/.local/share/containers/storage/
 ls ~/.config/containers/
-ls ~/.config/systemd/user/
-
-# Rootful
-sudo ls /var/lib/containers/storage/
-ls /etc/containers/
-ls /etc/systemd/system/
-
 podman info --format '{{.Store.GraphRoot}}'
 podman system df
-podman system prune -a
 ```
 
-## Tasks
+**You should see** storage paths under your home directory and a summary of images, containers, and volumes with sizes.
+
+```bash
+podman rm -f web2 2>/dev/null
+podman container prune -f
+podman system df
+```
+
+Reclaim space when needed:
+
+```bash
+podman system prune -a --volumes   # aggressive — deletes unused volumes too
+```
+
+**You should see** reclaimable space decrease after pruning. Use `skopeo copy` to move images between registries without a local pull — covered in the practice tasks.
+
+### Mini checkpoint
+
+Before the practice tasks, you should be able to explain:
+
+| Concept | Key point |
+| --- | --- |
+| Rootless vs rootful | **Separate storage, images, and containers** |
+| Fully qualified names | **`registry.access.redhat.com/ubi9/httpd-24`** |
+| `skopeo inspect` | **Remote inspect without pull; `docker://` prefix required** |
+| `-p HOST:CONTAINER` | **Host port first; Red Hat httpd uses 8080** |
+| `--name` | **Always use it** |
+| `:Z` on bind mounts | **Required for SELinux enforcing** |
+| Named volumes | **No `:Z` needed** |
+| `podman logs` | **First command when something fails** |
+| `podman exec` vs `run` | **exec = existing container; run = new container** |
+| Rootless ports | **Cannot bind host ports below 1024** |
+| Persistence | **Container stops at reboot; need systemd unit** |
+
+If any row is blank in your head, re-run the step above that covers it.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Install the container tools and confirm podman and skopeo are available. Report whether you are in rootless or rootful mode.
 
+> Hint: `dnf install container-tools`; `podman info --format '{{.Host.Security.Rootless}}'`.
+
 **Task 2.** Explain and demonstrate the difference between `podman images` and `sudo podman images`.
+
+> Hint: pull an image as your user, then compare both commands and the two `GraphRoot` paths.
 
 **Task 3.** Examine the registry configuration and list the registries searched for an unqualified image name.
 
+> Hint: `/etc/containers/registries.conf` and `podman info | grep -i registries`.
+
 **Task 4.** Search a registry for an httpd image and list its available tags.
+
+> Hint: `podman search` and `podman search --list-tags`; `skopeo list-tags docker://...`.
 
 **Task 5.** Inspect a remote image **without downloading it**, reporting its command, exposed ports, and environment variables.
 
+> Hint: `skopeo inspect docker://...` and `skopeo inspect --config docker://...`.
+
 **Task 6.** Pull the UBI 9 httpd image and confirm it is present locally, with its size and ID.
+
+> Hint: fully qualified pull; `podman images` and `podman image exists`.
 
 **Task 7.** Inspect the pulled image and report the default command, the exposed port, and any declared volumes.
 
+> Hint: `podman inspect --format '{{.Config....}}'` for Cmd, ExposedPorts, and Volumes.
+
 **Task 8.** Run a container from the UBI base image that prints the contents of `/etc/os-release` and then exits, leaving nothing behind.
+
+> Hint: `--rm` flag; verify with `podman ps -a`.
 
 **Task 9.** Run an interactive shell inside a container, create a file, exit, and demonstrate that the file is gone once the container is removed.
 
+> Hint: `-it --name`; `podman rm` destroys the writable layer; compare stop vs rm.
+
 **Task 10.** Run the httpd image detached, named `web`, publishing its port so it is reachable from the host, and verify with `curl`.
+
+> Hint: check `ExposedPorts` first — 8080, not 80; `-d --name web -p 8080:8080`.
 
 **Task 11.** Report the logs of the running container, then execute a command inside it without stopping it.
 
+> Hint: `podman logs web`; `podman exec web ...` (not `podman run`).
+
 **Task 12.** Serve custom content from a host directory using a bind mount, with SELinux enforcing.
+
+> Hint: `-v ~/dir:/var/www/html:Z`; confirm with `curl` and `ls -Z`.
 
 **Task 13.** Demonstrate what happens if you omit `:Z` on a bind mount, and diagnose the failure properly.
 
+> Hint: expect 403 or Permission denied; check `podman logs`, `ausearch -m AVC`, and compare with `:Z` fix.
+
 **Task 14.** Create a named volume, use it for persistent storage, and prove the data survives removing and recreating the container.
+
+> Hint: `podman volume create`; mount with `-v volname:/path`; rm container, recreate, curl again.
 
 **Task 15.** Run a database container passing the environment variables it requires, and verify they took effect.
 
+> Hint: `-e MYSQL_ROOT_PASSWORD=...` etc.; `podman exec db env | grep MYSQL`; `podman logs` if it exits.
+
 **Task 16.** Stop, start, restart, and remove containers. Show how to remove all stopped containers at once.
+
+> Hint: `podman stop/start/restart`; `podman rm -a` or `podman container prune`.
 
 **Task 17.** Attempt to publish port 80 as a rootless user, diagnose the error, and give two ways to solve it.
 
+> Hint: rootless cannot bind ports < 1024; use 8080, rootful, sysctl, or firewalld forwarding.
+
 **Task 18.** Make a containerised web server reachable from another machine.
+
+> Hint: `-p 8080:8080` (not 127.0.0.1); `firewall-cmd --permanent --add-port=8080/tcp` + `--reload`.
 
 **Task 19.** Report the disk space used by images, containers, and volumes, and reclaim it.
 
+> Hint: `podman system df`; prune with `container prune`, `image prune`, `system prune -a --volumes`.
+
 **Task 20.** Copy an image between registries, or export one to a local directory, using skopeo.
+
+> Hint: `skopeo copy docker://src docker://dst` or `skopeo copy docker://img dir:/tmp/path`.
 
 ---
 
@@ -2021,6 +2118,242 @@ podman ps -a                     # the container exists, stopped
 ```
 
 **Any task that says "the container must start at boot" or "run as a service" requires a systemd unit — that is `35-containers-systemd.md`, and it is where the marks are.**
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### Install and verify
+
+```bash
+sudo dnf install -y container-tools
+# or
+sudo dnf install -y podman skopeo buildah
+podman --version
+skopeo --version
+podman info | grep -i rootless
+podman info --format '{{.Host.Security.Rootless}}'
+podman info --format '{{.Store.GraphRoot}}'
+```
+
+### Podman versus Docker
+
+| | Docker | **Podman** |
+| --- | --- | --- |
+| Daemon | **A root daemon** | **None. Fork/exec** |
+| Rootless | Awkward | **Native and default** |
+| systemd integration | Poor | **`podman generate systemd`, Quadlet** |
+| Command syntax | `docker run` | **`podman run` — identical** |
+| Available on RHEL 9/10 | No | **Yes, the supported tool** |
+
+### Rootless versus rootful
+
+| | Rootless (`podman` as a user) | Rootful (`sudo podman`) |
+| --- | --- | --- |
+| Storage | **`~/.local/share/containers/`** | `/var/lib/containers/` |
+| Images visible to | **That user only** | root only |
+| Ports below 1024 | **Not allowed** | Allowed |
+| systemd units | **`~/.config/systemd/user/`** | `/etc/systemd/system/` |
+| Survives logout | **Only with `loginctl enable-linger`** | Yes |
+
+```bash
+podman images                    # your images
+sudo podman images               # root's images — a different set
+```
+
+### Registries
+
+```bash
+cat /etc/containers/registries.conf
+grep -v '^#' /etc/containers/registries.conf | grep -v '^$'
+podman info | grep -A5 -i registries
+podman login registry.redhat.io
+podman logout registry.redhat.io
+```
+
+| Registry | Content |
+| --- | --- |
+| `registry.access.redhat.com` | **Red Hat images, no login required** |
+| `registry.redhat.io` | Red Hat images, **login required** |
+| `docker.io` | Docker Hub |
+| `quay.io` | Red Hat's Quay |
+
+Adding a registry drop-in:
+
+```bash
+sudo tee /etc/containers/registries.conf.d/99-local.conf >/dev/null <<'EOF'
+[[registry]]
+location = "registry.lab.example.com:5000"
+insecure = true
+EOF
+```
+
+```bash
+podman pull registry.access.redhat.com/ubi9/httpd-24
+podman pull docker.io/library/nginx:latest
+```
+
+### Finding and pulling images
+
+```bash
+podman search httpd
+podman search --limit 5 nginx
+podman search registry.access.redhat.com/ubi
+podman search --list-tags registry.access.redhat.com/ubi9/httpd-24
+
+podman pull registry.access.redhat.com/ubi9/httpd-24
+podman pull registry.access.redhat.com/ubi9/ubi:latest
+podman pull docker.io/library/mariadb:10.5
+
+podman images
+podman images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+podman image ls
+podman image exists <image> && echo "present"
+```
+
+### Inspecting images
+
+```bash
+podman inspect <image>
+podman inspect --format '{{.Config.Cmd}}' <image>
+podman inspect --format '{{.Config.ExposedPorts}}' <image>
+podman inspect --format '{{.Config.Env}}' <image>
+podman inspect --format '{{.Config.Volumes}}' <image>
+podman history <image>
+
+skopeo inspect docker://registry.access.redhat.com/ubi9/httpd-24
+skopeo inspect --config docker://registry.access.redhat.com/ubi9/ubi
+skopeo list-tags docker://registry.access.redhat.com/ubi9/ubi
+skopeo copy docker://registry.access.redhat.com/ubi9/ubi dir:/tmp/ubi
+skopeo copy docker://src-registry/img docker://dst-registry/img
+```
+
+| Transport | Refers to |
+| --- | --- |
+| **`docker://`** | **A registry** |
+| `containers-storage:` | Local podman storage |
+| `dir:` | A directory on disk |
+| `oci:` | An OCI layout directory |
+| `docker-archive:` | A `docker save` tarball |
+
+### Running containers
+
+```bash
+podman run registry.access.redhat.com/ubi9/ubi echo "hello"
+podman run -it registry.access.redhat.com/ubi9/ubi /bin/bash
+podman run -d --name web registry.access.redhat.com/ubi9/httpd-24
+podman run -d --name web -p 8080:8080 <image>
+podman run -d --name web -e VAR=value <image>
+podman run -d --name web -v /host/path:/container/path:Z <image>
+podman run --rm <image> command
+```
+
+| Flag | Meaning |
+| --- | --- |
+| **`-d`** | **Detached, in the background** |
+| **`--name`** | **A name you can refer to** |
+| **`-p host:container`** | **Publish a port** |
+| **`-v host:container:Z`** | **Bind-mount, with SELinux relabelling** |
+| **`-e KEY=value`** | **An environment variable** |
+| `-it` | Interactive with a TTY |
+| `--rm` | Delete the container when it exits |
+| `-u` | Run as a given user |
+| `--restart=always` | Restart policy |
+| `--network` | Network mode |
+
+### Managing containers
+
+```bash
+podman ps
+podman ps -a
+podman ps --format '{{.Names}} {{.Status}} {{.Ports}}'
+podman stop web
+podman start web
+podman restart web
+podman kill web
+podman rm web
+podman rm -f web
+podman rm -a
+podman logs web
+podman logs -f web
+podman logs --tail 20 web
+podman exec -it web /bin/bash
+podman exec web cat /etc/os-release
+podman inspect web
+podman top web
+podman stats --no-stream
+podman port web
+podman diff web
+podman container prune -f
+```
+
+### Ports
+
+```bash
+podman run -d --name web -p 8080:8080 <image>
+podman run -d --name web -p 8080:80 <image>
+podman run -d --name web -p 127.0.0.1:8080:8080 <image>
+podman run -d --name web -P <image>
+podman port web
+curl http://localhost:8080
+ss -tlnp | grep 8080
+sudo firewall-cmd --permanent --add-port=8080/tcp
+sudo firewall-cmd --reload
+```
+
+Rootless: use port ≥ 1024, or `sudo podman`, or sysctl `net.ipv4.ip_unprivileged_port_start=80` in `/etc/sysctl.d/`.
+
+### Persistent storage
+
+```bash
+mkdir -p ~/webcontent
+podman run -d --name web -v ~/webcontent:/var/www/html:Z <image>
+podman volume create webdata
+podman run -d --name web -v webdata:/var/www/html <image>
+podman volume ls
+podman volume inspect webdata
+podman volume rm webdata
+podman unshare chown -R 1001:1001 ~/webcontent
+```
+
+| Suffix | Effect |
+| --- | --- |
+| **`:Z`** | **Relabel with a private SELinux label for this container** |
+| `:z` | Relabel with a shared label, for several containers |
+| `:ro` | Read-only |
+| `:rw` | Read-write (the default) |
+| **none** | **No relabelling — SELinux denies access** |
+
+### Environment variables
+
+```bash
+podman run -d --name db \
+  -e MYSQL_ROOT_PASSWORD=secret \
+  -e MYSQL_DATABASE=appdb \
+  -e MYSQL_USER=appuser \
+  -e MYSQL_PASSWORD=apppass \
+  registry.redhat.io/rhel9/mariadb-105
+podman exec db env
+podman inspect --format '{{.Config.Env}}' db
+podman run --env-file /root/db.env <image>
+podman run --rm <image> cat /help.1 2>/dev/null
+```
+
+### Where things live and cleanup
+
+```bash
+ls ~/.local/share/containers/storage/
+ls ~/.config/containers/
+ls ~/.config/systemd/user/
+sudo ls /var/lib/containers/storage/
+ls /etc/containers/
+podman system df
+podman system prune -a
+podman save -o /tmp/ubi.tar <image>
+podman load -i /tmp/ubi.tar
+```
+
+---
 
 ## Exam Tips
 

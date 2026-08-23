@@ -4,421 +4,219 @@
 
 Storage is the heaviest-weighted domain on the exam, and it is also where a mistake is most expensive: a wrong partition table wipes data, and a bad `/etc/fstab` entry stops the machine booting. **Work carefully and confirm the device name before every destructive command.**
 
-## Concept Refresher
+## Before You Start
 
-### The storage stack
-
-```text
-   ┌─────────────────────────────────────────────────┐
-   │  /data          mount point                     │  ← 30-filesystems-fstab.md
-   ├─────────────────────────────────────────────────┤
-   │  XFS / ext4     filesystem                      │  ← 30-filesystems-fstab.md
-   ├─────────────────────────────────────────────────┤
-   │  /dev/vg01/lv01 logical volume    (optional)    │  ← 29-lvm.md
-   │  /dev/vg01      volume group                    │
-   │  /dev/sdb1      physical volume                 │
-   ├─────────────────────────────────────────────────┤
-   │  /dev/sdb1      PARTITION                       │  ← THIS FILE
-   │  /dev/sdb       DISK                            │
-   └─────────────────────────────────────────────────┘
-```
-
-Every storage task walks up this stack. **This file covers the bottom two layers only** — creating the partition. Making a filesystem on it and mounting it is `30-filesystems-fstab.md`; using it for LVM is `29-lvm.md`.
-
-### Device names
-
-| Name | Meaning |
-| --- | --- |
-| `/dev/sda`, `/dev/sdb` | SCSI/SATA/USB disks |
-| `/dev/sda1`, `/dev/sda2` | **Partitions** on `sda` |
-| `/dev/vda`, `/dev/vdb` | virtio disks (KVM guests) |
-| `/dev/nvme0n1` | NVMe disk |
-| **`/dev/nvme0n1p1`** | **Partition 1 on that NVMe disk** — note the `p` |
-| `/dev/mapper/vg-lv` | LVM logical volume |
-| `/dev/sr0` | Optical drive |
-
-**NVMe and loop devices insert a `p` before the partition number.** `/dev/nvme0n1p1`, not `/dev/nvme0n11`.
-
-### Inspecting what you have
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
-lsblk                              # the tree. Start here, always
-lsblk -f                           # plus filesystem type, LABEL, UUID, mountpoint
-lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,UUID
-sudo fdisk -l                      # all disks and their partition tables
-sudo fdisk -l /dev/sdb
-sudo parted -l
-sudo parted /dev/sdb print
-blkid                              # UUIDs and types of everything formatted
-sudo blkid /dev/sdb1
-cat /proc/partitions
-df -hT                             # mounted filesystems and usage
-sudo sfdisk -l /dev/sdb
+vagrant ssh server1    # or ssh into your practice VM
 ```
 
-```text
-$ lsblk
-NAME          MAJ:MIN RM  SIZE RO TYPE MOUNTPOINTS
-sda             8:0     0   20G  0 disk
-├─sda1          8:1     0    1G  0 part /boot
-└─sda2          8:2     0   19G  0 part
-  ├─rhel-root 253:0     0   17G  0 lvm  /
-  └─rhel-swap 253:1     0    2G  0 lvm  [SWAP]
-sdb             8:16    0    2G  0 disk
-sdc             8:32    0    2G  0 disk
-```
+**Storage lessons need spare disks.** Your `server1` VM must have the three extra 2 GB disks described in `Lab-Setup.md`. Run `lsblk` — you should see unused disks (`sdb`, `sdc`, `sdd`) with no partitions and no mountpoints. **Never partition `/dev/sda` or `/dev/vda`** unless a task explicitly says so; it holds your OS.
 
-**`lsblk` is the first command of every storage task.** It shows which disks are unused (`sdb`, `sdc` above — no children, no mountpoints), which is how you identify the spare disk a task wants you to use.
+**How to use this file:**
 
-**Never assume a device name.** `lsblk` first, every time. Partitioning the wrong disk destroys the system.
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
 
-### MBR versus GPT
+---
 
-| | **MBR** (msdos) | **GPT** |
-| --- | --- | --- |
-| Max disk size | **2 TiB** | 8 ZiB |
-| Max primary partitions | **4** | **128** |
-| Extended/logical partitions | Needed beyond 4 | **Not needed** |
-| Partition table copies | One | **Two: start and end** |
-| Checksums | No | **Yes** |
-| Firmware | BIOS | UEFI (and BIOS with a bios_grub partition) |
-| Tool | `fdisk`, `parted` | **`gdisk`, `parted`, `fdisk`** |
+## Follow Along
+
+Work on **server1** with spare disks attached. After each step, compare your output to **You should see**.
+
+### 1. Identify disks safely
 
 ```bash
-sudo parted /dev/sdb print | grep 'Partition Table'
+lsblk
+lsblk -f
+lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
+```
+
+**You should see** `sda` (or `vda`) with `/boot` and `/` underneath, and **unused disks** like `sdb`, `sdc` with no children and no mountpoints. **`lsblk` first, every time.**
+
+### 2. Check partition table type
+
+```bash
+sudo parted /dev/sdb print | grep -i 'partition table'
 sudo fdisk -l /dev/sdb | grep -i 'disklabel type'
-sudo gdisk -l /dev/sdb 2>/dev/null | grep -i 'partition table'
 ```
 
-```text
-Partition Table: gpt
-```
+**You should see** `gpt`, `dos`, or no label on a fresh disk. **Use GPT unless a task says MBR.**
 
-**GPT is the modern default and has no four-partition limit.** Use GPT unless a task specifically says MBR. Modern `fdisk` handles both.
-
-The MBR primary/extended/logical arrangement only matters if a task says MBR and asks for more than four partitions:
-
-```text
-   MBR disk with more than 4 partitions:
-   sda1  primary
-   sda2  primary
-   sda3  primary
-   sda4  EXTENDED  ── container, holds no data itself
-         ├─ sda5   logical
-         ├─ sda6   logical
-         └─ sda7   logical
-```
-
-**Logical partition numbering starts at 5**, always, even if fewer than four primaries exist.
-
-### fdisk
-
-Interactive, and the tool most people use. It works on both MBR and GPT.
+### 3. Create a GPT label and a 1 GiB partition with fdisk
 
 ```bash
 sudo fdisk /dev/sdb
 ```
 
-| Key | Action |
-| --- | --- |
-| **`m`** | **Help. Use it whenever you are unsure** |
-| `p` | Print the current table |
-| **`n`** | **New partition** |
-| **`d`** | **Delete a partition** |
-| **`t`** | **Change the partition type** |
-| `l` | List type codes |
-| `i` | Information about a partition |
-| `g` | **Create a new empty GPT table** |
-| `o` | Create a new empty MBR (DOS) table |
-| `F` | Show free space |
-| `v` | Verify the table |
-| **`w`** | **WRITE the table and exit** |
-| **`q`** | **Quit WITHOUT saving — your escape hatch** |
-
-**Nothing is written until you press `w`. `q` discards everything.** If you make a mistake mid-session, press `q` and start again. This makes `fdisk` far safer than it looks.
-
-A complete session creating a 1 GiB partition:
-
-```text
-$ sudo fdisk /dev/sdb
-
-Welcome to fdisk (util-linux 2.37.4).
-Changes will remain in memory only, until you decide to write them.
-
-Command (m for help): n
-Partition number (1-128, default 1): <Enter>
-First sector (2048-4194303, default 2048): <Enter>
-Last sector, +/-sectors or +/-size{K,M,G,T,P} (2048-4194303, default 4194303): +1G
-
-Created a new partition 1 of type 'Linux filesystem' and of size 1 GiB.
-
-Command (m for help): p
-Device     Start     End Sectors Size Type
-/dev/sdb1   2048 2099199 2097152   1G Linux filesystem
-
-Command (m for help): w
-The partition table has been altered.
-Calling ioctl() to re-read partition table.
-Syncing disks.
-```
-
-**Accept the defaults for the first sector — always.** `fdisk` picks a correctly aligned start. Typing your own number risks misalignment and poor performance.
-
-**Specify the size as `+1G`, not an end sector.** Sector arithmetic is a needless source of error.
-
-### Partition type codes
+Inside fdisk: `g` (new GPT), `n`, Enter, Enter, `+1G`, `p`, `w`.
 
 ```bash
-sudo fdisk /dev/sdb
-Command: t
-Partition type or alias: L        # list them
-```
-
-The ones that matter:
-
-| Type | GPT alias | MBR hex |
-| --- | --- | --- |
-| Linux filesystem | `20` / `linux` | `83` |
-| **Linux swap** | **`19` / `swap`** | **`82`** |
-| **Linux LVM** | **`31` / `lvm`** | **`8e`** |
-| Linux RAID | `29` | `fd` |
-| EFI System | `1` | `ef` |
-
-```text
-Command (m for help): t
-Selected partition 1
-Partition type or alias (type L to list all): swap
-Changed type of partition 'Linux filesystem' to 'Linux swap'.
-```
-
-**Set type `swap` (82/19) for swap partitions and `lvm` (8e/31) for LVM physical volumes.** Neither is strictly required by the kernel — `mkswap` and `pvcreate` work regardless — but a task that says "create a partition of type Linux LVM" is checking it, and it documents intent for the next administrator.
-
-You can also use the numeric alias or hex code:
-
-```text
-Partition type or alias (type L to list all): 19        # GPT swap
-Partition type or alias (type L to list all): 82        # MBR swap
-```
-
-### parted
-
-Non-interactive, scriptable, and **applies changes immediately with no confirmation step**.
-
-```bash
-sudo parted /dev/sdb print
-sudo parted /dev/sdb print free
-sudo parted /dev/sdb unit MiB print
-
-# Create a label (partition table) — DESTROYS existing partitions
-sudo parted /dev/sdb mklabel gpt
-sudo parted /dev/sdb mklabel msdos
-
-# Create partitions
-sudo parted /dev/sdb mkpart primary xfs 1MiB 1025MiB
-sudo parted /dev/sdb mkpart data xfs 1MiB 1GiB
-sudo parted /dev/sdb mkpart primary linux-swap 1025MiB 1537MiB
-
-# Flags
-sudo parted /dev/sdb set 1 lvm on
-sudo parted /dev/sdb set 1 boot on
-
-# Delete
-sudo parted /dev/sdb rm 1
-
-# Resize a partition
-sudo parted /dev/sdb resizepart 1 2GiB
-```
-
-Interactive mode:
-
-```bash
-sudo parted /dev/sdb
-(parted) print
-(parted) mkpart primary xfs 1MiB 1025MiB
-(parted) quit
-```
-
-**`parted` has no `w` and no `q`-to-abort. Every command takes effect at once.** That makes it faster for scripting and considerably more dangerous by hand.
-
-| | `fdisk` | `parted` |
-| --- | --- | --- |
-| Interface | Interactive | **Command-line or interactive** |
-| Confirmation | **`w` to write, `q` to abort** | **None — immediate** |
-| Size input | **`+1G` from the current point** | **Absolute start and end offsets** |
-| Scriptable | Awkwardly | **Yes** |
-| Recommended for the exam | **Yes** | For resizing |
-
-**Use `fdisk` on the exam.** The `q` escape hatch is worth a great deal under time pressure. Use `parted` for `resizepart`, which `fdisk` cannot do safely.
-
-Note `parted` offsets are absolute and it starts at `1MiB` for alignment:
-
-```bash
-sudo parted /dev/sdb mkpart primary xfs 1MiB 1025MiB    # a 1024 MiB partition
-```
-
-Getting the arithmetic wrong produces overlapping or misaligned partitions, and `parted` warns but proceeds. Another reason to prefer `fdisk`.
-
-### gdisk
-
-`fdisk` for GPT specifically. The keystrokes are nearly identical.
-
-```bash
-sudo gdisk /dev/sdb
-```
-
-| Key | Action |
-| --- | --- |
-| `p` | Print the table |
-| `n` | New partition |
-| `d` | Delete |
-| `t` | Change type (GPT codes: `8300` Linux, `8200` swap, `8e00` LVM) |
-| `i` | Partition information |
-| `v` | Verify |
-| **`w`** | Write and exit |
-| `q` | Quit without saving |
-| `r` | Recovery and transformation menu |
-
-```bash
-sudo sgdisk -p /dev/sdb                                    # print
-sudo sgdisk -n 1:0:+1G -t 1:8e00 /dev/sdb                  # scripted
-sudo sgdisk --zap-all /dev/sdb                             # wipe both GPT copies
-```
-
-**`sgdisk --zap-all` is the cleanest way to start a disk from scratch**, because it removes both GPT copies and any MBR remnant. Handy when a disk has stale metadata from a previous exercise.
-
-**`fdisk` handles GPT perfectly well on RHEL 9 and 10, so `gdisk` is optional.** Know it exists; use `fdisk`.
-
-### Making the kernel see the change
-
-```bash
-sudo partprobe /dev/sdb
-sudo partprobe                    # all disks
-sudo partx -u /dev/sdb
-sudo udevadm settle
-lsblk
-```
-
-**`fdisk w` normally re-reads the table automatically.** But if the disk has any partition in use — mounted, swapped on, or an active PV — the kernel refuses and you get:
-
-```text
-Re-reading the partition table failed.: Device or resource busy
-The kernel still uses the old table. The new table will be used at the next
-reboot or after you run partprobe(8) or partx(8).
-```
-
-Then:
-
-```bash
-sudo partprobe /dev/sdb
-lsblk /dev/sdb                    # is the new partition visible now?
-ls -l /dev/sdb*
-```
-
-**Always confirm with `lsblk` that `/dev/sdbN` exists before you try to `mkfs` it.** "No such file or directory" from `mkfs` almost always means the kernel has not picked up the new table.
-
-If `partprobe` also fails because a partition is genuinely in use, unmount it, or reboot.
-
-### Wiping a disk
-
-```bash
-sudo wipefs -a /dev/sdb1                # remove filesystem signatures
-sudo wipefs -a /dev/sdb                 # remove the partition table too
-sudo wipefs /dev/sdb                    # LIST signatures without removing
-sudo sgdisk --zap-all /dev/sdb
-sudo dd if=/dev/zero of=/dev/sdb bs=1M count=10
-```
-
-**`wipefs` without `-a` only lists**, which is the safe way to check what is on a device before destroying it:
-
-```bash
-sudo wipefs /dev/sdb
-```
-
-```text
-DEVICE OFFSET TYPE UUID                                 LABEL
-sdb    0x200  gpt
-sdb    0x1fffffe00 gpt
-```
-
-Stale signatures cause real confusion — `mkfs` warns "found existing xfs signature" and `blkid` reports the wrong type. `wipefs -a` clears them.
-
-### The standard end-to-end workflow
-
-```bash
-# 1. Identify the disk
-lsblk
-
-# 2. Partition it
-sudo fdisk /dev/sdb
-#   n, Enter, Enter, +1G, t, <type>, w
-
-# 3. Make sure the kernel sees it
 sudo partprobe /dev/sdb
 lsblk /dev/sdb
-
-# 4. Filesystem (see 30-filesystems-fstab.md)
-sudo mkfs.xfs /dev/sdb1
-
-# 5. Mount point and mount
-sudo mkdir -p /data
-sudo mount /dev/sdb1 /data
-
-# 6. Persist it (see 30-filesystems-fstab.md) — THE STEP THAT SCORES
-sudo blkid /dev/sdb1
-echo 'UUID=... /data xfs defaults 0 0' | sudo tee -a /etc/fstab
-sudo findmnt --verify
-sudo mount -a
 ```
 
-**Steps 1 to 3 are this file. Steps 4 to 6 are `30-filesystems-fstab.md`, and step 6 is where the marks are.** A partition with no `/etc/fstab` entry scores nothing.
+**You should see** `/dev/sdb1` about 1G in size. **Nothing is written until `w`; `q` aborts everything.**
 
-### Safety rules
+### 4. Add swap and LVM partitions on the same disk
 
-1. **`lsblk` before every destructive command.** Confirm you have the right disk.
-2. **The system disk is usually `/dev/sda` or `/dev/vda` and holds `/`, `/boot`, and swap.** Never touch it unless a task explicitly says to.
-3. **In `fdisk`, `q` aborts.** Use it freely if unsure.
-4. **`parted` acts immediately.** Prefer `fdisk`.
-5. **Check for mounts before deleting a partition**: `lsblk`, `findmnt`, `swapon --show`.
-6. **After any partition change, `partprobe` and `lsblk`.**
-7. **Remove the `/etc/fstab` entry before deleting a partition**, or the next boot fails.
+Use fdisk again on `/dev/sdb`: create `+512M`, type `swap` (alias or 19); then create a third partition using remaining space, type `lvm`.
 
-**Rule 7 is the one that ends exams.** Deleting a partition that is still referenced in `/etc/fstab` gives you a machine that drops to emergency mode at boot. See `15-systemd-targets-boot.md` and `16-boot-interrupt-root-recovery.md` for the recovery, and `30-filesystems-fstab.md` for `nofail`.
+```bash
+sudo partprobe /dev/sdb
+sudo fdisk -l /dev/sdb
+```
 
-## Tasks
+**You should see** three partitions with types Linux filesystem, Linux swap, and Linux LVM.
+
+### 5. Handle "kernel still uses old table"
+
+If `fdisk` warns the table was not re-read:
+
+```bash
+sudo partprobe /dev/sdb
+ls -l /dev/sdb*
+lsblk /dev/sdb
+```
+
+**You should see** device nodes for each partition. **`mkfs: No such file or directory` means run `partprobe`, not repeat fdisk.**
+
+### 6. Create a partition with parted (immediate writes)
+
+```bash
+sudo parted /dev/sdd mklabel gpt
+sudo parted /dev/sdd mkpart primary xfs 1MiB 501MiB
+sudo parted /dev/sdd set 1 lvm on
+sudo parted /dev/sdd print
+```
+
+**You should see** a 500 MiB partition with the `lvm` flag. **parted applies changes immediately — there is no `q` to abort.**
+
+### 7. Report UUIDs before formatting
+
+```bash
+sudo blkid /dev/sdb1 2>/dev/null || echo "Not formatted yet"
+sudo blkid -s UUID -o value /dev/sda1
+```
+
+**You should see** a UUID only on formatted devices. **Use `UUID=` in `/etc/fstab`, not `/dev/sdb1`.**
+
+### 8. Wipe signatures safely
+
+```bash
+sudo wipefs /dev/sdb1
+sudo wipefs -a /dev/sdb1
+sudo blkid /dev/sdb1
+```
+
+**You should see** signatures listed, then removed. **`wipefs` without `-a` only lists.**
+
+### 9. Remove a mounted partition safely (order matters)
+
+```bash
+grep data /etc/fstab
+findmnt /data 2>/dev/null
+```
+
+**You should see** why **fstab entry must be removed before deleting a partition** — otherwise the next boot drops to emergency mode.
+
+### 10. Verify partition layout
+
+```bash
+sudo fdisk -l /dev/sdb
+sudo parted /dev/sdb print
+cat /proc/partitions | grep sdb
+```
+
+**You should see** consistent partition numbers, sizes, and types across tools.
+
+### Mini checkpoint
+
+| Tool | Safe abort? | Size syntax |
+| --- | --- | --- |
+| **fdisk** | **`q` before `w`** | **`+1G` from current point** |
+| **parted** | **No — immediate** | **Absolute start/end (1MiB 501MiB)** |
+| **gdisk** | **`q` before `w`** | Same family as fdisk |
+
+Type codes to know: `swap` (82/19), `lvm` (8e/31), Linux filesystem (83/20).
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** List all block devices with their sizes, types, filesystems, and mount points. Identify which disks are unused.
 
+> Hint: lsblk -f and lsblk -o; spare disks have no FSTYPE, children, or mountpoints.
+
 **Task 2.** Determine whether `/dev/sdb` uses an MBR or a GPT partition table, using two different commands.
+
+> Hint: parted print and fdisk -l; gpt vs dos/msdos.
 
 **Task 3.** Create a new GPT partition table on `/dev/sdb`.
 
+> Hint: fdisk: g for GPT, n, Enter, Enter, +1G, w; partprobe then lsblk.
+
 **Task 4.** Create a 1 GiB partition on `/dev/sdb` of type "Linux filesystem", using `fdisk`.
+
+> Hint: Same fdisk session habits; p before w.
 
 **Task 5.** Confirm the kernel is aware of the new partition, and explain what to do if it is not.
 
+> Hint: partprobe, lsblk, cat /proc/partitions if the kernel has not re-read the table.
+
 **Task 6.** Create a second partition of 512 MiB on `/dev/sdb` and set its type to Linux swap.
+
+> Hint: n, +512M, t, swap; then n, use remaining space, t, lvm.
 
 **Task 7.** Create a third partition using all remaining space on `/dev/sdb` and set its type to Linux LVM.
 
+> Hint: Accept default last sector for 'all remaining space'; F in fdisk shows free space.
+
 **Task 8.** Display the resulting partition table, showing start and end sectors and type names.
+
+> Hint: fdisk -l, parted print, lsblk -o with PARTTYPENAME.
 
 **Task 9.** On `/dev/sdc`, create an MBR partition table with three primary partitions of 200 MiB each and an extended partition containing two logical partitions.
 
+> Hint: MBR only: o, three +200M primaries, extended partition, two logical partitions starting at 5.
+
 **Task 10.** Delete the second partition from `/dev/sdc` and verify the deletion.
+
+> Hint: Check findmnt, fstab, pvs before d; default for d is last partition — type the number.
 
 **Task 11.** Create a 500 MiB partition on `/dev/sdd` using `parted` non-interactively, and set the LVM flag.
 
+> Hint: parted mklabel gpt mkpart 1MiB 501MiB set 1 lvm on; -s for script mode.
+
 **Task 12.** Grow an existing partition from 500 MiB to 1 GiB using `parted`.
+
+> Hint: parted resizepart; growing partition does not grow the filesystem.
 
 **Task 13.** Show what filesystem signatures exist on a device, then remove them.
 
+> Hint: wipefs lists; wipefs -a removes; umount first.
+
 **Task 14.** Completely erase all partitioning from a disk so it can be reused.
+
+> Hint: umount, swapoff, remove fstab entries, wipefs -a or sgdisk --zap-all.
 
 **Task 15.** You must delete a partition that is currently mounted and listed in `/etc/fstab`. Do it safely, in the correct order.
 
+> Hint: Order: backup fstab, remove fstab line, findmnt --verify, umount, then fdisk d.
+
 **Task 16.** Report the UUID and filesystem type of every partition on the system.
 
+> Hint: blkid, lsblk -f; blkid -s UUID -o value for fstab one-liners.
+
 **Task 17.** Explain how a partition change persists and what makes it usable after a reboot.
+
+> Hint: Partitions persist on disk; mounts need /etc/fstab — see 30-filesystems-fstab.md.
+
+---
 
 ---
 
@@ -1417,6 +1215,390 @@ The two traps run in opposite directions:
 sudo findmnt --verify
 sudo mount -a && echo OK || echo "*** FIX FSTAB BEFORE REBOOTING ***"
 ```
+
+---
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### The storage stack
+
+```text
+   ┌─────────────────────────────────────────────────┐
+   │  /data          mount point                     │  ← 30-filesystems-fstab.md
+   ├─────────────────────────────────────────────────┤
+   │  XFS / ext4     filesystem                      │  ← 30-filesystems-fstab.md
+   ├─────────────────────────────────────────────────┤
+   │  /dev/vg01/lv01 logical volume    (optional)    │  ← 29-lvm.md
+   │  /dev/vg01      volume group                    │
+   │  /dev/sdb1      physical volume                 │
+   ├─────────────────────────────────────────────────┤
+   │  /dev/sdb1      PARTITION                       │  ← THIS FILE
+   │  /dev/sdb       DISK                            │
+   └─────────────────────────────────────────────────┘
+```
+
+Every storage task walks up this stack. **This file covers the bottom two layers only** — creating the partition. Making a filesystem on it and mounting it is `30-filesystems-fstab.md`; using it for LVM is `29-lvm.md`.
+
+### Device names
+
+| Name | Meaning |
+| --- | --- |
+| `/dev/sda`, `/dev/sdb` | SCSI/SATA/USB disks |
+| `/dev/sda1`, `/dev/sda2` | **Partitions** on `sda` |
+| `/dev/vda`, `/dev/vdb` | virtio disks (KVM guests) |
+| `/dev/nvme0n1` | NVMe disk |
+| **`/dev/nvme0n1p1`** | **Partition 1 on that NVMe disk** — note the `p` |
+| `/dev/mapper/vg-lv` | LVM logical volume |
+| `/dev/sr0` | Optical drive |
+
+**NVMe and loop devices insert a `p` before the partition number.** `/dev/nvme0n1p1`, not `/dev/nvme0n11`.
+
+### Inspecting what you have
+
+```bash
+lsblk                              # the tree. Start here, always
+lsblk -f                           # plus filesystem type, LABEL, UUID, mountpoint
+lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,UUID
+sudo fdisk -l                      # all disks and their partition tables
+sudo fdisk -l /dev/sdb
+sudo parted -l
+sudo parted /dev/sdb print
+blkid                              # UUIDs and types of everything formatted
+sudo blkid /dev/sdb1
+cat /proc/partitions
+df -hT                             # mounted filesystems and usage
+sudo sfdisk -l /dev/sdb
+```
+
+```text
+$ lsblk
+NAME          MAJ:MIN RM  SIZE RO TYPE MOUNTPOINTS
+sda             8:0     0   20G  0 disk
+├─sda1          8:1     0    1G  0 part /boot
+└─sda2          8:2     0   19G  0 part
+  ├─rhel-root 253:0     0   17G  0 lvm  /
+  └─rhel-swap 253:1     0    2G  0 lvm  [SWAP]
+sdb             8:16    0    2G  0 disk
+sdc             8:32    0    2G  0 disk
+```
+
+**`lsblk` is the first command of every storage task.** It shows which disks are unused (`sdb`, `sdc` above — no children, no mountpoints), which is how you identify the spare disk a task wants you to use.
+
+**Never assume a device name.** `lsblk` first, every time. Partitioning the wrong disk destroys the system.
+
+### MBR versus GPT
+
+| | **MBR** (msdos) | **GPT** |
+| --- | --- | --- |
+| Max disk size | **2 TiB** | 8 ZiB |
+| Max primary partitions | **4** | **128** |
+| Extended/logical partitions | Needed beyond 4 | **Not needed** |
+| Partition table copies | One | **Two: start and end** |
+| Checksums | No | **Yes** |
+| Firmware | BIOS | UEFI (and BIOS with a bios_grub partition) |
+| Tool | `fdisk`, `parted` | **`gdisk`, `parted`, `fdisk`** |
+
+```bash
+sudo parted /dev/sdb print | grep 'Partition Table'
+sudo fdisk -l /dev/sdb | grep -i 'disklabel type'
+sudo gdisk -l /dev/sdb 2>/dev/null | grep -i 'partition table'
+```
+
+```text
+Partition Table: gpt
+```
+
+**GPT is the modern default and has no four-partition limit.** Use GPT unless a task specifically says MBR. Modern `fdisk` handles both.
+
+The MBR primary/extended/logical arrangement only matters if a task says MBR and asks for more than four partitions:
+
+```text
+   MBR disk with more than 4 partitions:
+   sda1  primary
+   sda2  primary
+   sda3  primary
+   sda4  EXTENDED  ── container, holds no data itself
+         ├─ sda5   logical
+         ├─ sda6   logical
+         └─ sda7   logical
+```
+
+**Logical partition numbering starts at 5**, always, even if fewer than four primaries exist.
+
+### fdisk
+
+Interactive, and the tool most people use. It works on both MBR and GPT.
+
+```bash
+sudo fdisk /dev/sdb
+```
+
+| Key | Action |
+| --- | --- |
+| **`m`** | **Help. Use it whenever you are unsure** |
+| `p` | Print the current table |
+| **`n`** | **New partition** |
+| **`d`** | **Delete a partition** |
+| **`t`** | **Change the partition type** |
+| `l` | List type codes |
+| `i` | Information about a partition |
+| `g` | **Create a new empty GPT table** |
+| `o` | Create a new empty MBR (DOS) table |
+| `F` | Show free space |
+| `v` | Verify the table |
+| **`w`** | **WRITE the table and exit** |
+| **`q`** | **Quit WITHOUT saving — your escape hatch** |
+
+**Nothing is written until you press `w`. `q` discards everything.** If you make a mistake mid-session, press `q` and start again. This makes `fdisk` far safer than it looks.
+
+A complete session creating a 1 GiB partition:
+
+```text
+$ sudo fdisk /dev/sdb
+
+Welcome to fdisk (util-linux 2.37.4).
+Changes will remain in memory only, until you decide to write them.
+
+Command (m for help): n
+Partition number (1-128, default 1): <Enter>
+First sector (2048-4194303, default 2048): <Enter>
+Last sector, +/-sectors or +/-size{K,M,G,T,P} (2048-4194303, default 4194303): +1G
+
+Created a new partition 1 of type 'Linux filesystem' and of size 1 GiB.
+
+Command (m for help): p
+Device     Start     End Sectors Size Type
+/dev/sdb1   2048 2099199 2097152   1G Linux filesystem
+
+Command (m for help): w
+The partition table has been altered.
+Calling ioctl() to re-read partition table.
+Syncing disks.
+```
+
+**Accept the defaults for the first sector — always.** `fdisk` picks a correctly aligned start. Typing your own number risks misalignment and poor performance.
+
+**Specify the size as `+1G`, not an end sector.** Sector arithmetic is a needless source of error.
+
+### Partition type codes
+
+```bash
+sudo fdisk /dev/sdb
+Command: t
+Partition type or alias: L        # list them
+```
+
+The ones that matter:
+
+| Type | GPT alias | MBR hex |
+| --- | --- | --- |
+| Linux filesystem | `20` / `linux` | `83` |
+| **Linux swap** | **`19` / `swap`** | **`82`** |
+| **Linux LVM** | **`31` / `lvm`** | **`8e`** |
+| Linux RAID | `29` | `fd` |
+| EFI System | `1` | `ef` |
+
+```text
+Command (m for help): t
+Selected partition 1
+Partition type or alias (type L to list all): swap
+Changed type of partition 'Linux filesystem' to 'Linux swap'.
+```
+
+**Set type `swap` (82/19) for swap partitions and `lvm` (8e/31) for LVM physical volumes.** Neither is strictly required by the kernel — `mkswap` and `pvcreate` work regardless — but a task that says "create a partition of type Linux LVM" is checking it, and it documents intent for the next administrator.
+
+You can also use the numeric alias or hex code:
+
+```text
+Partition type or alias (type L to list all): 19        # GPT swap
+Partition type or alias (type L to list all): 82        # MBR swap
+```
+
+### parted
+
+Non-interactive, scriptable, and **applies changes immediately with no confirmation step**.
+
+```bash
+sudo parted /dev/sdb print
+sudo parted /dev/sdb print free
+sudo parted /dev/sdb unit MiB print
+
+# Create a label (partition table) — DESTROYS existing partitions
+sudo parted /dev/sdb mklabel gpt
+sudo parted /dev/sdb mklabel msdos
+
+# Create partitions
+sudo parted /dev/sdb mkpart primary xfs 1MiB 1025MiB
+sudo parted /dev/sdb mkpart data xfs 1MiB 1GiB
+sudo parted /dev/sdb mkpart primary linux-swap 1025MiB 1537MiB
+
+# Flags
+sudo parted /dev/sdb set 1 lvm on
+sudo parted /dev/sdb set 1 boot on
+
+# Delete
+sudo parted /dev/sdb rm 1
+
+# Resize a partition
+sudo parted /dev/sdb resizepart 1 2GiB
+```
+
+Interactive mode:
+
+```bash
+sudo parted /dev/sdb
+(parted) print
+(parted) mkpart primary xfs 1MiB 1025MiB
+(parted) quit
+```
+
+**`parted` has no `w` and no `q`-to-abort. Every command takes effect at once.** That makes it faster for scripting and considerably more dangerous by hand.
+
+| | `fdisk` | `parted` |
+| --- | --- | --- |
+| Interface | Interactive | **Command-line or interactive** |
+| Confirmation | **`w` to write, `q` to abort** | **None — immediate** |
+| Size input | **`+1G` from the current point** | **Absolute start and end offsets** |
+| Scriptable | Awkwardly | **Yes** |
+| Recommended for the exam | **Yes** | For resizing |
+
+**Use `fdisk` on the exam.** The `q` escape hatch is worth a great deal under time pressure. Use `parted` for `resizepart`, which `fdisk` cannot do safely.
+
+Note `parted` offsets are absolute and it starts at `1MiB` for alignment:
+
+```bash
+sudo parted /dev/sdb mkpart primary xfs 1MiB 1025MiB    # a 1024 MiB partition
+```
+
+Getting the arithmetic wrong produces overlapping or misaligned partitions, and `parted` warns but proceeds. Another reason to prefer `fdisk`.
+
+### gdisk
+
+`fdisk` for GPT specifically. The keystrokes are nearly identical.
+
+```bash
+sudo gdisk /dev/sdb
+```
+
+| Key | Action |
+| --- | --- |
+| `p` | Print the table |
+| `n` | New partition |
+| `d` | Delete |
+| `t` | Change type (GPT codes: `8300` Linux, `8200` swap, `8e00` LVM) |
+| `i` | Partition information |
+| `v` | Verify |
+| **`w`** | Write and exit |
+| `q` | Quit without saving |
+| `r` | Recovery and transformation menu |
+
+```bash
+sudo sgdisk -p /dev/sdb                                    # print
+sudo sgdisk -n 1:0:+1G -t 1:8e00 /dev/sdb                  # scripted
+sudo sgdisk --zap-all /dev/sdb                             # wipe both GPT copies
+```
+
+**`sgdisk --zap-all` is the cleanest way to start a disk from scratch**, because it removes both GPT copies and any MBR remnant. Handy when a disk has stale metadata from a previous exercise.
+
+**`fdisk` handles GPT perfectly well on RHEL 9 and 10, so `gdisk` is optional.** Know it exists; use `fdisk`.
+
+### Making the kernel see the change
+
+```bash
+sudo partprobe /dev/sdb
+sudo partprobe                    # all disks
+sudo partx -u /dev/sdb
+sudo udevadm settle
+lsblk
+```
+
+**`fdisk w` normally re-reads the table automatically.** But if the disk has any partition in use — mounted, swapped on, or an active PV — the kernel refuses and you get:
+
+```text
+Re-reading the partition table failed.: Device or resource busy
+The kernel still uses the old table. The new table will be used at the next
+reboot or after you run partprobe(8) or partx(8).
+```
+
+Then:
+
+```bash
+sudo partprobe /dev/sdb
+lsblk /dev/sdb                    # is the new partition visible now?
+ls -l /dev/sdb*
+```
+
+**Always confirm with `lsblk` that `/dev/sdbN` exists before you try to `mkfs` it.** "No such file or directory" from `mkfs` almost always means the kernel has not picked up the new table.
+
+If `partprobe` also fails because a partition is genuinely in use, unmount it, or reboot.
+
+### Wiping a disk
+
+```bash
+sudo wipefs -a /dev/sdb1                # remove filesystem signatures
+sudo wipefs -a /dev/sdb                 # remove the partition table too
+sudo wipefs /dev/sdb                    # LIST signatures without removing
+sudo sgdisk --zap-all /dev/sdb
+sudo dd if=/dev/zero of=/dev/sdb bs=1M count=10
+```
+
+**`wipefs` without `-a` only lists**, which is the safe way to check what is on a device before destroying it:
+
+```bash
+sudo wipefs /dev/sdb
+```
+
+```text
+DEVICE OFFSET TYPE UUID                                 LABEL
+sdb    0x200  gpt
+sdb    0x1fffffe00 gpt
+```
+
+Stale signatures cause real confusion — `mkfs` warns "found existing xfs signature" and `blkid` reports the wrong type. `wipefs -a` clears them.
+
+### The standard end-to-end workflow
+
+```bash
+# 1. Identify the disk
+lsblk
+
+# 2. Partition it
+sudo fdisk /dev/sdb
+#   n, Enter, Enter, +1G, t, <type>, w
+
+# 3. Make sure the kernel sees it
+sudo partprobe /dev/sdb
+lsblk /dev/sdb
+
+# 4. Filesystem (see 30-filesystems-fstab.md)
+sudo mkfs.xfs /dev/sdb1
+
+# 5. Mount point and mount
+sudo mkdir -p /data
+sudo mount /dev/sdb1 /data
+
+# 6. Persist it (see 30-filesystems-fstab.md) — THE STEP THAT SCORES
+sudo blkid /dev/sdb1
+echo 'UUID=... /data xfs defaults 0 0' | sudo tee -a /etc/fstab
+sudo findmnt --verify
+sudo mount -a
+```
+
+**Steps 1 to 3 are this file. Steps 4 to 6 are `30-filesystems-fstab.md`, and step 6 is where the marks are.** A partition with no `/etc/fstab` entry scores nothing.
+
+### Safety rules
+
+1. **`lsblk` before every destructive command.** Confirm you have the right disk.
+2. **The system disk is usually `/dev/sda` or `/dev/vda` and holds `/`, `/boot`, and swap.** Never touch it unless a task explicitly says to.
+3. **In `fdisk`, `q` aborts.** Use it freely if unsure.
+4. **`parted` acts immediately.** Prefer `fdisk`.
+5. **Check for mounts before deleting a partition**: `lsblk`, `findmnt`, `swapon --show`.
+6. **After any partition change, `partprobe` and `lsblk`.**
+7. **Remove the `/etc/fstab` entry before deleting a partition**, or the next boot fails.
+
+**Rule 7 is the one that ends exams.** Deleting a partition that is still referenced in `/etc/fstab` gives you a machine that drops to emergency mode at boot. See `15-systemd-targets-boot.md` and `16-boot-interrupt-root-recovery.md` for the recovery, and `30-filesystems-fstab.md` for `nofail`.
 
 ## Exam Tips
 

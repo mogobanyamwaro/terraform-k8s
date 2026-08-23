@@ -4,344 +4,244 @@
 
 **This is the only objective that needs two machines**, which is why the exam gives you a second host or a prepared NFS server. It also combines with almost every other domain — firewall, SELinux, `/etc/fstab`, and systemd services all appear here.
 
-## Concept Refresher
+## Before You Start
 
-### Client and server
-
-The RHCSA objective says **"mount and unmount network file systems using NFS"** — the client side. Configuring a server is not strictly required, but you need one to practise against and tasks sometimes provide one for you to set up.
-
-```text
-   ┌─────────────────────────────┐         ┌──────────────────────────────┐
-   │  server2 (NFS SERVER)       │         │  server1 (NFS CLIENT)        │
-   │                             │         │                              │
-   │  /etc/exports               │◄────────┤  mount server2:/export /nfs  │
-   │  nfs-server.service         │  2049   │  /etc/fstab  (_netdev)       │
-   │  firewall: nfs, mountd,     │         │  or autofs                   │
-   │            rpc-bind         │         │  nfs-utils                   │
-   └─────────────────────────────┘         └──────────────────────────────┘
-```
-
-### Client: packages and discovery
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
+vagrant ssh server1    # client — most follow-along steps run here
+vagrant ssh server2    # NFS server — export and firewall steps in later tasks
+```
+
+**This objective needs both VMs from `Lab-Setup.md`.** server1 is the NFS client; server2 exports `/export/shared` (and related paths). Both must be on `192.168.56.0/24`.
+
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+---
+
+## Follow Along
+
+You need **server1** (client) and **server2** (NFS server) on the same network. After each step, compare your output to **You should see**.
+
+### 1. Confirm server reachability and exports
+
+```bash
+ping -c2 server2.lab.example.com
 sudo dnf install -y nfs-utils
-rpm -q nfs-utils
-
-# What does the server export?
 showmount -e server2.lab.example.com
-showmount -e 192.168.56.12
-showmount -a server2                       # who has it mounted
-sudo rpcinfo -p server2                    # RPC services (NFSv3)
 ```
 
-```text
-$ showmount -e server2.lab.example.com
-Export list for server2.lab.example.com:
-/export/shared 192.168.56.0/24
-/export/home   *
-```
+**You should see** a list of export paths and allowed clients. **`showmount -e` is the first command of any NFS task.**
 
-**`showmount -e SERVER` is the first command of any NFS task.** It tells you what exists, and whether the server is reachable at all.
-
-**`nfs-utils` is required on the client, not just the server.** Without it, `mount -t nfs` fails with "wrong fs type" — a confusing error for a missing package.
-
-### Client: mounting
+### 2. Mount NFS manually
 
 ```bash
 sudo mkdir -p /nfs
 sudo mount -t nfs server2:/export/shared /nfs
-sudo mount server2:/export/shared /nfs                 # -t nfs is inferred
-sudo mount -t nfs -o vers=4.2 server2:/export/shared /nfs
-sudo mount -t nfs -o ro server2:/export/shared /nfs
-sudo mount -t nfs -o soft,timeo=100 server2:/export/shared /nfs
-
 findmnt /nfs
 df -hT /nfs
-sudo umount /nfs
+sudo touch /nfs/testfile
 ```
 
-**Note the colon: `server:/path`, not `server/path`.**
+**You should see** `nfs` or `nfs4` type and a successful write. **Syntax is `server:/path` with a colon.**
 
-Persisting it in `/etc/fstab`:
-
-```text
-server2:/export/shared  /nfs  nfs  defaults,_netdev  0 0
-```
-
-| Field | Value |
-| --- | --- |
-| Device | **`server:/export/path`** |
-| Mount point | `/nfs` |
-| Type | **`nfs`** or `nfs4` |
-| Options | **`defaults,_netdev`** |
-| Dump / fsck | `0 0` |
-
-**`_netdev` is essential.** It tells systemd this mount needs the network, so the boot waits for networking instead of trying to mount before an interface is up:
+### 3. Persist with _netdev
 
 ```bash
 echo "server2:/export/shared  /nfs  nfs  defaults,_netdev  0 0" | sudo tee -a /etc/fstab
 sudo findmnt --verify
+sudo umount /nfs
 sudo mount -a
+findmnt /nfs
 ```
 
-**Without `_netdev`, the mount fails at boot** and can drop the machine into emergency mode. Consider adding `nofail` as well for a non-critical mount.
+**You should see** the mount return. **`_netdev` waits for the network — mandatory for NFS in fstab.**
 
-Useful NFS mount options:
+### 4. On server2 — export, service, firewall
 
-| Option | Effect |
-| --- | --- |
-| **`_netdev`** | **Wait for the network. Required in `/etc/fstab`** |
-| `nofail` | Do not fail the boot if the server is unreachable |
-| `ro` / `rw` | Read-only / read-write |
-| `vers=4.2`, `vers=3` | Protocol version |
-| **`soft`** | **Fail I/O after retries. Prevents indefinite hangs** |
-| `hard` | Retry forever. The default |
-| `timeo=100` | Timeout in tenths of a second |
-| `retrans=3` | Retries before reporting an error |
-| `intr` | Allow interrupting (ignored on modern kernels) |
-| `noatime` | Reduce access-time traffic |
-| `sync` / `async` | Write behaviour |
-| `x-systemd.automount` | Mount on first access |
-
-**`hard` is the default and means a process blocks forever if the server disappears** — including `df`, which then hangs your terminal. `soft` returns an error instead. For exam practice, `soft,timeo=100` makes a broken server much less painful.
-
-### Server: exporting
+On **server2**:
 
 ```bash
-sudo dnf install -y nfs-utils
 sudo mkdir -p /export/shared
-sudo chmod 777 /export/shared
-```
-
-`/etc/exports`:
-
-```text
-/export/shared  192.168.56.0/24(rw,sync,no_root_squash)
-/export/home    *(rw,sync)
-/export/ro      192.168.56.11(ro)
-/export/multi   server1(rw) server3(ro)
-```
-
-```bash
+echo "/export/shared  192.168.56.0/24(rw,sync)" | sudo tee -a /etc/exports
+sudo exportfs -rav
 sudo systemctl enable --now nfs-server
-sudo exportfs -rav                         # re-read /etc/exports
-sudo exportfs -v                           # show active exports
 sudo firewall-cmd --permanent --add-service=nfs
 sudo firewall-cmd --permanent --add-service=mountd
 sudo firewall-cmd --permanent --add-service=rpc-bind
 sudo firewall-cmd --reload
 ```
 
-Export options:
+**You should see** no space before `(rw,sync)` in exports. **Four layers: directory, exports, service, firewall.**
 
-| Option | Meaning |
-| --- | --- |
-| `rw` / `ro` | Read-write / read-only |
-| **`sync`** | **Commit writes before replying. The safe default** |
-| `async` | Faster, risks data loss on a crash |
-| **`root_squash`** | **Map remote root to `nobody`. The default** |
-| `no_root_squash` | Remote root is real root. **Dangerous** |
-| `all_squash` | Map every user to `nobody` |
-| `anonuid=`, `anongid=` | The identity to squash to |
-| `no_subtree_check` | Slight performance gain |
-
-**No space between the host and the parentheses.** `192.168.56.0/24(rw)` is correct; `192.168.56.0/24 (rw)` exports read-only to that host *and* read-write to the world — a classic and serious mistake.
-
-**`exportfs -rav` after every `/etc/exports` change**, the same way `firewall-cmd --reload` follows a permanent firewall change.
-
-Firewall for NFS:
+### 5. Mount read-only and with soft options
 
 ```bash
-firewall-cmd --info-service=nfs            # 2049/tcp
-firewall-cmd --info-service=mountd
-firewall-cmd --info-service=rpc-bind
+sudo umount /nfs
+sudo mount -t nfs -o ro server2:/export/shared /nfs
+findmnt /nfs
+sudo touch /nfs/x
 ```
 
-**NFSv4 needs only `nfs` (port 2049). NFSv3 also needs `mountd` and `rpc-bind`.** Adding all three is harmless and safer.
+**You should see** `ro` in options and write refused. **`hard` (default) hangs forever if the server dies — use `soft,timeo=100` in the lab.**
 
-### autofs
+### 6. Install and enable autofs
 
-autofs mounts on access and unmounts after an idle period. It avoids boot-time dependencies on a server and stops idle mounts hanging the system.
-
-```text
-   /etc/auto.master           the MASTER map
-       │
-       │  /shares   /etc/auto.shares   --timeout=60
-       │      │            │
-       │  mount point   map file
-       ▼
-   /etc/auto.shares          the MAP file
-       │
-       │  data  -rw,sync  server2:/export/shared
-       │   │       │            │
-       │  key   options      location
-```
+On **server1**:
 
 ```bash
 sudo dnf install -y autofs
+sudo mkdir -p /etc/auto.master.d
+echo "/shares  /etc/auto.shares  --timeout=60" | sudo tee /etc/auto.master.d/shares.autofs
+echo "data  -rw,sync  server2:/export/shared" | sudo tee /etc/auto.shares
 sudo systemctl enable --now autofs
-systemctl status autofs
 ```
 
-**Indirect map** — the usual form:
+**You should see** autofs enabled. **Drop-in files must end in `.autofs`.**
+
+### 7. Trigger an indirect automount
 
 ```bash
-# /etc/auto.master  (or a file in /etc/auto.master.d/)
-/shares  /etc/auto.shares  --timeout=60
-```
-
-```bash
-# /etc/auto.shares
-data   -rw,sync  server2:/export/shared
-home   -rw       server2:/export/home
-docs   -ro       server2:/export/docs
-```
-
-```bash
-sudo systemctl restart autofs
-ls /shares/data                            # mounts on access
+findmnt /shares/data
+ls /shares/data
 findmnt /shares/data
 ```
 
-**Do not create the subdirectory under `/shares` yourself** — autofs manages it. Creating `/shares/data` by hand actually breaks it.
+**You should see** nothing before access, then an NFS mount after `ls /shares/data`. **`ls /shares` alone may look empty — access the full path.**
 
-**Direct map** — an absolute mount point:
-
-```bash
-# /etc/auto.master
-/-  /etc/auto.direct
-```
+### 8. Configure a wildcard map
 
 ```bash
-# /etc/auto.direct
-/mnt/shared  -rw  server2:/export/shared
-```
-
-**`/-` in the master map signals a direct map.** The map file then contains absolute paths.
-
-**Wildcard map** — the classic home-directory case:
-
-```bash
-# /etc/auto.master
-/home/guests  /etc/auto.guests
-```
-
-```bash
-# /etc/auto.guests
-*  -rw  server2:/export/home/&
-```
-
-**`*` is the requested key and `&` substitutes it.** So `cd /home/guests/alice` mounts `server2:/export/home/alice`. **This exact pattern is a favourite exam task.**
-
-Drop-in master entries:
-
-```bash
-sudo mkdir -p /etc/auto.master.d
-echo "/shares  /etc/auto.shares  --timeout=60" | sudo tee /etc/auto.master.d/shares.autofs
+echo "/home/guests  /etc/auto.guests" | sudo tee /etc/auto.master.d/guests.autofs
+echo "*  -rw,sync  server2:/export/home/&" | sudo tee /etc/auto.guests
 sudo systemctl restart autofs
+ls /home/guests/alice
+findmnt | grep guests
 ```
 
-**Files in `/etc/auto.master.d/` must end in `.autofs`.** This is cleaner than editing `/etc/auto.master`, the same reasoning as `/etc/sudoers.d/` and systemd drop-ins.
+**You should see** `server2:/export/home/alice` mounted. **`*` matches any key; `&` substitutes it in the server path.**
 
-**`systemctl restart autofs` after every map change.** `reload` is unreliable for map changes.
-
-### autofs versus /etc/fstab
-
-| | **`/etc/fstab`** | **autofs** |
-| --- | --- | --- |
-| Mounted | **At boot** | **On first access** |
-| Unmounted | Never, automatically | **After the idle timeout** |
-| Server unreachable at boot | **Boot delayed or fails** | **No effect** |
-| Server unreachable later | Processes hang (`hard`) | Access fails, others unaffected |
-| Wildcards | No | **Yes** |
-| Needs a service | No | **`autofs` must be enabled** |
-| Requires `_netdev` | **Yes** | No |
-
-**A task that says "mount at boot" means `/etc/fstab`. A task that says "on demand", "when accessed", or "using autofs" means autofs.** Read the wording.
-
-### Troubleshooting
+### 9. Diagnose missing nfs-utils
 
 ```bash
-# 1. Is the server reachable?
-ping -c2 server2
-getent hosts server2
-
-# 2. What does it export?
-showmount -e server2
-
-# 3. Is nfs-utils installed here?
 rpm -q nfs-utils
-
-# 4. Try mounting by hand
-sudo mount -t nfs -v server2:/export/shared /nfs
-
-# 5. Server side: is it running and exporting?
-systemctl status nfs-server
-sudo exportfs -v
-
-# 6. Server side: firewall
-sudo firewall-cmd --list-services
-
-# 7. SELinux, on both ends
-sudo ausearch -m AVC -ts recent
-getsebool -a | grep nfs
-
-# 8. autofs
-systemctl status autofs
-sudo automount -f -v                       # run in the foreground, verbose
-journalctl -u autofs -n 30
+ls -l /sbin/mount.nfs
 ```
 
-| Symptom | Likely cause |
+**You should see** the package installed. **Without it, mount reports misleading "wrong fs type".**
+
+### 10. Pre-reboot checklist both machines
+
+On **server1**:
+
+```bash
+grep nfs /etc/fstab
+sudo mount -a && echo OK
+systemctl is-enabled autofs
+```
+
+On **server2**:
+
+```bash
+systemctl is-enabled nfs-server
+sudo exportfs -v
+sudo firewall-cmd --permanent --list-services
+```
+
+**You should see** enabled services and `_netdev` in fstab. **Grading happens after reboot — check both machines.**
+
+### Mini checkpoint
+
+| Error on client | Usually fix on |
 | --- | --- |
-| `mount: wrong fs type` | **`nfs-utils` not installed on the client** |
-| `No route to host` | **Firewall on the server** |
-| `access denied by server` | **`/etc/exports` does not permit this client** |
-| `Connection refused` | **`nfs-server` not running** |
-| Hangs forever | Server unreachable with `hard` — use `soft` |
-| Mounts by hand, not at boot | **`_netdev` missing**, or the entry is absent |
-| autofs directory empty | **Do not `ls` the parent; access the subdirectory directly** |
-| Permission denied writing | `ro` export, or `root_squash`, or UID mismatch |
+| wrong fs type | **Client** — install nfs-utils |
+| No route to host | **Server** — firewall |
+| Connection refused | **Server** — nfs-server |
+| access denied by server | **Server** — /etc/exports |
 
-**`sudo automount -f -v` is the best autofs diagnostic** — stop the service, run it in the foreground, and watch it parse your maps and attempt mounts.
+---
 
-## Tasks
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Discover what NFS exports a remote server offers, and confirm it is reachable.
 
+> Hint: ping, getent hosts, showmount -e; fix /etc/hosts if DNS missing.
+
 **Task 2.** Install the client package and mount `server2:/export/shared` at `/nfs` manually. Verify the type and that it is writable.
+
+> Hint: dnf install nfs-utils, mkdir, mount -t nfs server2:/export/shared, touch test file.
 
 **Task 3.** Make that NFS mount persistent so it is available after a reboot, with the option that makes it network-aware.
 
+> Hint: fstab with defaults,_netdev; findmnt --verify; umount; mount -a.
+
 **Task 4.** Verify the NFS mount survives a reboot.
+
+> Hint: reboot client; findmnt /nfs, cat test file.
 
 **Task 5.** Mount an NFS export read-only, and confirm writes are refused.
 
+> Hint: mount -o ro; touch fails with Read-only file system.
+
 **Task 6.** Mount an export with options that prevent the client hanging indefinitely if the server disappears.
+
+> Hint: soft,timeo=100,retrans=3 in fstab or mount options.
 
 **Task 7.** Configure the second machine as an NFS server exporting `/export/shared` read-write to the `192.168.56.0/24` network, addressing every layer.
 
+> Hint: On server2: mkdir, /etc/exports, exportfs -rav, enable nfs-server, firewall nfs+mountd+rpc-bind.
+
 **Task 8.** On the server, add a read-only export for one specific client only, and reload the exports without restarting the service.
+
+> Hint: Add ro export for one IP; exportfs -rav without restarting nfs-server.
 
 **Task 9.** Install and enable autofs, then configure an indirect map so that `/shares/data` mounts `server2:/export/shared` on access, unmounting after 60 idle seconds.
 
+> Hint: auto.master.d drop-in, auto.shares map, enable autofs, ls /shares/data not /shares.
+
 **Task 10.** Verify the autofs mount happens on access and disappears after the timeout.
+
+> Hint: findmnt before/after access; sleep past timeout; journalctl -u autofs.
 
 **Task 11.** Configure a direct autofs map so that `/mnt/shared` mounts the same export.
 
+> Hint: Direct map: /- in master, absolute path in auto.direct.
+
 **Task 12.** Configure a wildcard autofs map so that `/home/guests/<username>` mounts `server2:/export/home/<username>`.
+
+> Hint: Wildcard * and & in auto.guests; server exports /export/home *(rw,sync).
 
 **Task 13.** Use a drop-in file rather than editing `/etc/auto.master`, and explain why.
 
+> Hint: Use /etc/auto.master.d/*.autofs; +dir includes them; survives package updates.
+
 **Task 14.** Diagnose: `mount -t nfs server2:/export/shared /nfs` reports "wrong fs type, bad option, bad superblock".
+
+> Hint: rpm -q nfs-utils; install package.
 
 **Task 15.** Diagnose: the NFS mount works when run by hand but is absent after a reboot.
 
+> Hint: Manual mount works, boot fails → missing _netdev or fstab entry.
+
 **Task 16.** Diagnose: an autofs directory appears empty and nothing mounts.
+
+> Hint: autofs enabled? *.autofs suffix? restart after map change? ls full path not parent?
 
 **Task 17.** Diagnose: the NFS mount succeeds but writing a file is denied.
 
+> Hint: Permission denied vs RO — exportfs -v, ls -ld on server, root_squash.
+
 **Task 18.** Verify all NFS and autofs configuration survives a reboot.
+
+> Hint: Client: _netdev, mount -a, is-enabled autofs; server: is-enabled nfs-server, permanent firewall.
+
+---
 
 ---
 
@@ -1760,6 +1660,311 @@ grep nfs /etc/fstab && sudo mount -a && systemctl is-enabled autofs
 # server
 systemctl is-enabled nfs-server && sudo exportfs -v && sudo firewall-cmd --permanent --list-services
 ```
+
+---
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### Client and server
+
+The RHCSA objective says **"mount and unmount network file systems using NFS"** — the client side. Configuring a server is not strictly required, but you need one to practise against and tasks sometimes provide one for you to set up.
+
+```text
+   ┌─────────────────────────────┐         ┌──────────────────────────────┐
+   │  server2 (NFS SERVER)       │         │  server1 (NFS CLIENT)        │
+   │                             │         │                              │
+   │  /etc/exports               │◄────────┤  mount server2:/export /nfs  │
+   │  nfs-server.service         │  2049   │  /etc/fstab  (_netdev)       │
+   │  firewall: nfs, mountd,     │         │  or autofs                   │
+   │            rpc-bind         │         │  nfs-utils                   │
+   └─────────────────────────────┘         └──────────────────────────────┘
+```
+
+### Client: packages and discovery
+
+```bash
+sudo dnf install -y nfs-utils
+rpm -q nfs-utils
+
+# What does the server export?
+showmount -e server2.lab.example.com
+showmount -e 192.168.56.12
+showmount -a server2                       # who has it mounted
+sudo rpcinfo -p server2                    # RPC services (NFSv3)
+```
+
+```text
+$ showmount -e server2.lab.example.com
+Export list for server2.lab.example.com:
+/export/shared 192.168.56.0/24
+/export/home   *
+```
+
+**`showmount -e SERVER` is the first command of any NFS task.** It tells you what exists, and whether the server is reachable at all.
+
+**`nfs-utils` is required on the client, not just the server.** Without it, `mount -t nfs` fails with "wrong fs type" — a confusing error for a missing package.
+
+### Client: mounting
+
+```bash
+sudo mkdir -p /nfs
+sudo mount -t nfs server2:/export/shared /nfs
+sudo mount server2:/export/shared /nfs                 # -t nfs is inferred
+sudo mount -t nfs -o vers=4.2 server2:/export/shared /nfs
+sudo mount -t nfs -o ro server2:/export/shared /nfs
+sudo mount -t nfs -o soft,timeo=100 server2:/export/shared /nfs
+
+findmnt /nfs
+df -hT /nfs
+sudo umount /nfs
+```
+
+**Note the colon: `server:/path`, not `server/path`.**
+
+Persisting it in `/etc/fstab`:
+
+```text
+server2:/export/shared  /nfs  nfs  defaults,_netdev  0 0
+```
+
+| Field | Value |
+| --- | --- |
+| Device | **`server:/export/path`** |
+| Mount point | `/nfs` |
+| Type | **`nfs`** or `nfs4` |
+| Options | **`defaults,_netdev`** |
+| Dump / fsck | `0 0` |
+
+**`_netdev` is essential.** It tells systemd this mount needs the network, so the boot waits for networking instead of trying to mount before an interface is up:
+
+```bash
+echo "server2:/export/shared  /nfs  nfs  defaults,_netdev  0 0" | sudo tee -a /etc/fstab
+sudo findmnt --verify
+sudo mount -a
+```
+
+**Without `_netdev`, the mount fails at boot** and can drop the machine into emergency mode. Consider adding `nofail` as well for a non-critical mount.
+
+Useful NFS mount options:
+
+| Option | Effect |
+| --- | --- |
+| **`_netdev`** | **Wait for the network. Required in `/etc/fstab`** |
+| `nofail` | Do not fail the boot if the server is unreachable |
+| `ro` / `rw` | Read-only / read-write |
+| `vers=4.2`, `vers=3` | Protocol version |
+| **`soft`** | **Fail I/O after retries. Prevents indefinite hangs** |
+| `hard` | Retry forever. The default |
+| `timeo=100` | Timeout in tenths of a second |
+| `retrans=3` | Retries before reporting an error |
+| `intr` | Allow interrupting (ignored on modern kernels) |
+| `noatime` | Reduce access-time traffic |
+| `sync` / `async` | Write behaviour |
+| `x-systemd.automount` | Mount on first access |
+
+**`hard` is the default and means a process blocks forever if the server disappears** — including `df`, which then hangs your terminal. `soft` returns an error instead. For exam practice, `soft,timeo=100` makes a broken server much less painful.
+
+### Server: exporting
+
+```bash
+sudo dnf install -y nfs-utils
+sudo mkdir -p /export/shared
+sudo chmod 777 /export/shared
+```
+
+`/etc/exports`:
+
+```text
+/export/shared  192.168.56.0/24(rw,sync,no_root_squash)
+/export/home    *(rw,sync)
+/export/ro      192.168.56.11(ro)
+/export/multi   server1(rw) server3(ro)
+```
+
+```bash
+sudo systemctl enable --now nfs-server
+sudo exportfs -rav                         # re-read /etc/exports
+sudo exportfs -v                           # show active exports
+sudo firewall-cmd --permanent --add-service=nfs
+sudo firewall-cmd --permanent --add-service=mountd
+sudo firewall-cmd --permanent --add-service=rpc-bind
+sudo firewall-cmd --reload
+```
+
+Export options:
+
+| Option | Meaning |
+| --- | --- |
+| `rw` / `ro` | Read-write / read-only |
+| **`sync`** | **Commit writes before replying. The safe default** |
+| `async` | Faster, risks data loss on a crash |
+| **`root_squash`** | **Map remote root to `nobody`. The default** |
+| `no_root_squash` | Remote root is real root. **Dangerous** |
+| `all_squash` | Map every user to `nobody` |
+| `anonuid=`, `anongid=` | The identity to squash to |
+| `no_subtree_check` | Slight performance gain |
+
+**No space between the host and the parentheses.** `192.168.56.0/24(rw)` is correct; `192.168.56.0/24 (rw)` exports read-only to that host *and* read-write to the world — a classic and serious mistake.
+
+**`exportfs -rav` after every `/etc/exports` change**, the same way `firewall-cmd --reload` follows a permanent firewall change.
+
+Firewall for NFS:
+
+```bash
+firewall-cmd --info-service=nfs            # 2049/tcp
+firewall-cmd --info-service=mountd
+firewall-cmd --info-service=rpc-bind
+```
+
+**NFSv4 needs only `nfs` (port 2049). NFSv3 also needs `mountd` and `rpc-bind`.** Adding all three is harmless and safer.
+
+### autofs
+
+autofs mounts on access and unmounts after an idle period. It avoids boot-time dependencies on a server and stops idle mounts hanging the system.
+
+```text
+   /etc/auto.master           the MASTER map
+       │
+       │  /shares   /etc/auto.shares   --timeout=60
+       │      │            │
+       │  mount point   map file
+       ▼
+   /etc/auto.shares          the MAP file
+       │
+       │  data  -rw,sync  server2:/export/shared
+       │   │       │            │
+       │  key   options      location
+```
+
+```bash
+sudo dnf install -y autofs
+sudo systemctl enable --now autofs
+systemctl status autofs
+```
+
+**Indirect map** — the usual form:
+
+```bash
+# /etc/auto.master  (or a file in /etc/auto.master.d/)
+/shares  /etc/auto.shares  --timeout=60
+```
+
+```bash
+# /etc/auto.shares
+data   -rw,sync  server2:/export/shared
+home   -rw       server2:/export/home
+docs   -ro       server2:/export/docs
+```
+
+```bash
+sudo systemctl restart autofs
+ls /shares/data                            # mounts on access
+findmnt /shares/data
+```
+
+**Do not create the subdirectory under `/shares` yourself** — autofs manages it. Creating `/shares/data` by hand actually breaks it.
+
+**Direct map** — an absolute mount point:
+
+```bash
+# /etc/auto.master
+/-  /etc/auto.direct
+```
+
+```bash
+# /etc/auto.direct
+/mnt/shared  -rw  server2:/export/shared
+```
+
+**`/-` in the master map signals a direct map.** The map file then contains absolute paths.
+
+**Wildcard map** — the classic home-directory case:
+
+```bash
+# /etc/auto.master
+/home/guests  /etc/auto.guests
+```
+
+```bash
+# /etc/auto.guests
+*  -rw  server2:/export/home/&
+```
+
+**`*` is the requested key and `&` substitutes it.** So `cd /home/guests/alice` mounts `server2:/export/home/alice`. **This exact pattern is a favourite exam task.**
+
+Drop-in master entries:
+
+```bash
+sudo mkdir -p /etc/auto.master.d
+echo "/shares  /etc/auto.shares  --timeout=60" | sudo tee /etc/auto.master.d/shares.autofs
+sudo systemctl restart autofs
+```
+
+**Files in `/etc/auto.master.d/` must end in `.autofs`.** This is cleaner than editing `/etc/auto.master`, the same reasoning as `/etc/sudoers.d/` and systemd drop-ins.
+
+**`systemctl restart autofs` after every map change.** `reload` is unreliable for map changes.
+
+### autofs versus /etc/fstab
+
+| | **`/etc/fstab`** | **autofs** |
+| --- | --- | --- |
+| Mounted | **At boot** | **On first access** |
+| Unmounted | Never, automatically | **After the idle timeout** |
+| Server unreachable at boot | **Boot delayed or fails** | **No effect** |
+| Server unreachable later | Processes hang (`hard`) | Access fails, others unaffected |
+| Wildcards | No | **Yes** |
+| Needs a service | No | **`autofs` must be enabled** |
+| Requires `_netdev` | **Yes** | No |
+
+**A task that says "mount at boot" means `/etc/fstab`. A task that says "on demand", "when accessed", or "using autofs" means autofs.** Read the wording.
+
+### Troubleshooting
+
+```bash
+# 1. Is the server reachable?
+ping -c2 server2
+getent hosts server2
+
+# 2. What does it export?
+showmount -e server2
+
+# 3. Is nfs-utils installed here?
+rpm -q nfs-utils
+
+# 4. Try mounting by hand
+sudo mount -t nfs -v server2:/export/shared /nfs
+
+# 5. Server side: is it running and exporting?
+systemctl status nfs-server
+sudo exportfs -v
+
+# 6. Server side: firewall
+sudo firewall-cmd --list-services
+
+# 7. SELinux, on both ends
+sudo ausearch -m AVC -ts recent
+getsebool -a | grep nfs
+
+# 8. autofs
+systemctl status autofs
+sudo automount -f -v                       # run in the foreground, verbose
+journalctl -u autofs -n 30
+```
+
+| Symptom | Likely cause |
+| --- | --- |
+| `mount: wrong fs type` | **`nfs-utils` not installed on the client** |
+| `No route to host` | **Firewall on the server** |
+| `access denied by server` | **`/etc/exports` does not permit this client** |
+| `Connection refused` | **`nfs-server` not running** |
+| Hangs forever | Server unreachable with `hard` — use `soft` |
+| Mounts by hand, not at boot | **`_netdev` missing**, or the entry is absent |
+| autofs directory empty | **Do not `ls` the parent; access the subdirectory directly** |
+| Permission denied writing | `ro` export, or `root_squash`, or UID mismatch |
+
+**`sudo automount -f -v` is the best autofs diagnostic** — stop the service, run it in the foreground, and watch it parse your maps and attempt mounts.
 
 ## Exam Tips
 

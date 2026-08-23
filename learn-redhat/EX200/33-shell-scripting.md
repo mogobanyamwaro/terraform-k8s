@@ -10,75 +10,74 @@
 
 **The most common way to lose them is forgetting `chmod +x`.**
 
-## Concept Refresher
+## Before You Start
 
-### Anatomy of a script
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
+vagrant ssh server1    # or ssh into your practice VM
+```
+
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+Reading every bash construct upfront feels like learning. Typing them one at a time actually is.
+
+---
+
+## Follow Along
+
+Work on your lab VM as root (or with `sudo`). After each step, compare your output to **You should see**.
+
+### 1. Write your first script — shebang and `chmod +x`
+
+Every script needs three things: a shebang on line 1, the execute bit, and `./` or an absolute path to run it.
+
+```bash
+sudo tee /root/demo-hello.sh >/dev/null <<'EOF'
 #!/bin/bash
-# Description of what this does
-
-USER_LIST="/root/users.txt"
-
-if [[ -f "$USER_LIST" ]]; then
-    while read -r name; do
-        echo "Processing $name"
-    done < "$USER_LIST"
-else
-    echo "File not found" >&2
-    exit 1
-fi
-
-exit 0
+echo "Hello from a script"
+EOF
+sudo chmod +x /root/demo-hello.sh
+ls -l /root/demo-hello.sh
+sudo /root/demo-hello.sh
 ```
+
+**You should see** `-rwxr-xr-x` in the permissions (the `x` bits) and the line `Hello from a script`.
+
+The shebang `#!/bin/bash` must be the **very first line** — no blank line or comment before it. Without it, the script may run under `sh`, where `[[ ]]`, `=~`, and other bashisms fail.
+
+Try without the execute bit:
 
 ```bash
-vim myscript.sh
-chmod +x myscript.sh
-./myscript.sh
-bash myscript.sh                 # runs without the execute bit
+sudo chmod -x /root/demo-hello.sh
+sudo /root/demo-hello.sh
+sudo chmod +x /root/demo-hello.sh
 ```
 
-**Three things every script needs:**
+**You should see** `command not found` or `Permission denied` without `+x`. **`bash /root/demo-hello.sh` works without the bit, but a grader expects `chmod +x`.** Always confirm with `ls -l`.
 
-1. **`#!/bin/bash` on line 1.** The shebang. Without it the script may be interpreted by `sh`, where `[[ ]]` and other bashisms fail.
-2. **`chmod +x`.** Without it, `./script.sh` gives "Permission denied".
-3. **An absolute path or `./`.** `script.sh` alone fails because `.` is not in `PATH`.
+### 2. Positional parameters — `$0`, `$1`, `$#`, `"$@"`
+
+Scripts receive arguments as numbered parameters.
 
 ```bash
-chmod +x /root/myscript.sh
-ls -l /root/myscript.sh
-```
-
-```text
--rwxr-xr-x. 1 root root 234 Aug 18 17:00 /root/myscript.sh
-```
-
-**Check `ls -l` for the `x` before you declare a scripting task finished.**
-
-### Positional parameters
-
-```bash
+sudo tee /root/demo-args.sh >/dev/null <<'EOF'
 #!/bin/bash
 echo "Script name : $0"
 echo "First arg   : $1"
 echo "Second arg  : $2"
 echo "Arg count   : $#"
 echo "All args    : $@"
-echo "All as one  : $*"
+EOF
+sudo chmod +x /root/demo-args.sh
+sudo /root/demo-args.sh alpha beta gamma
 ```
 
-```bash
-./args.sh alpha beta gamma
-```
-
-```text
-Script name : ./args.sh
-First arg   : alpha
-Second arg  : beta
-Arg count   : 3
-All args    : alpha beta gamma
-```
+**You should see** the script name, `alpha`, `beta`, count `3`, and all three arguments listed.
 
 | Variable | Meaning |
 | --- | --- |
@@ -89,30 +88,50 @@ All args    : alpha beta gamma
 | **`$@`** | **All arguments, each separately quoted** |
 | `$*` | All arguments as one string |
 | `$?` | **The exit status of the last command** |
-| `$$` | The script's process ID |
 
-**`"$@"` and `"$*"` differ and it matters:**
+**`"$@"` and `"$*"` differ:**
 
 ```bash
-for a in "$@"; do echo "[$a]"; done      # one iteration per argument
-for a in "$*"; do echo "[$a]"; done      # ONE iteration, everything joined
+sudo tee /root/demo-at.sh >/dev/null <<'EOF'
+#!/bin/bash
+echo '--- "$@" ---'
+for a in "$@"; do echo "[$a]"; done
+echo '--- "$*" ---'
+for a in "$*"; do echo "[$a]"; done
+EOF
+sudo chmod +x /root/demo-at.sh
+sudo /root/demo-at.sh one "two three" four
 ```
 
-**Use `"$@"`.** With arguments `one` and `two three`, `"$@"` preserves two arguments while `"$*"` collapses them into one.
+**You should see** three bracketed items under `"$@"` (with `two three` as one) and **one** item under `"$*"` (everything joined). **Use `"$@"` almost always.**
 
-Checking arguments — the standard idiom:
+When writing a script via heredoc, use `<<'EOF'` with quotes so `$1` is not expanded while *writing* the file.
+
+### 3. The usage-check idiom
+
+Exam tasks often say "print a usage message if no argument is given."
 
 ```bash
+sudo tee /root/demo-usage.sh >/dev/null <<'EOF'
 #!/bin/bash
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <filename>" >&2
     exit 1
 fi
+echo "Processing: $1"
+EOF
+sudo chmod +x /root/demo-usage.sh
+sudo /root/demo-usage.sh
+echo "exit status: $?"
+sudo /root/demo-usage.sh myfile
+echo "exit status: $?"
 ```
 
-**A task saying "the script must accept an argument" or "print a usage message if no argument is given" wants exactly this.**
+**You should see** the usage message on stderr with exit status `1`, then `Processing: myfile` with status `0`.
 
-`shift` moves the parameters down:
+Three details graders check: **`>&2`** sends errors to stderr, **`exit 1`** is non-zero failure, **`$#`** is the argument count. Use `-ne 1` for exactly one argument; `-lt 1` for at least one.
+
+`shift` moves parameters down when consuming arguments:
 
 ```bash
 while [[ $# -gt 0 ]]; do
@@ -121,37 +140,32 @@ while [[ $# -gt 0 ]]; do
 done
 ```
 
-### Conditionals
+### 4. Conditionals and file tests
+
+Use `[[ ]]` in bash scripts — safer with empty variables and supports `=~` and `&&`.
 
 ```bash
-if [[ condition ]]; then
-    commands
-elif [[ other ]]; then
-    commands
+sudo tee /root/demo-filetest.sh >/dev/null <<'EOF'
+#!/bin/bash
+TARGET="${1:-/etc/passwd}"
+if [[ -f "$TARGET" ]]; then
+    echo "$TARGET is a regular file"
+elif [[ -d "$TARGET" ]]; then
+    echo "$TARGET is a directory"
+elif [[ -e "$TARGET" ]]; then
+    echo "$TARGET exists but is neither file nor directory"
 else
-    commands
+    echo "$TARGET does not exist" >&2
+    exit 1
 fi
+EOF
+sudo chmod +x /root/demo-filetest.sh
+sudo /root/demo-filetest.sh /etc/passwd
+sudo /root/demo-filetest.sh /etc
+sudo /root/demo-filetest.sh /nonexistent; echo "status: $?"
 ```
 
-**The `;` before `then` is required**, or `then` must go on its own line.
-
-Three test syntaxes:
-
-| Syntax | Notes |
-| --- | --- |
-| `test EXPR` | The original |
-| `[ EXPR ]` | POSIX. **Spaces inside the brackets are mandatory** |
-| **`[[ EXPR ]]`** | **Bash. Safer with unquoted variables, supports `=~` and `&&`** |
-| `(( EXPR ))` | **Arithmetic.** `(( x > 5 ))` |
-
-**Use `[[ ]]` in bash scripts.** It handles empty variables without quoting surprises and supports regex matching.
-
-```bash
-[ $x = "y" ]        # breaks if x is empty or contains spaces
-[[ $x = "y" ]]      # safe
-```
-
-File tests — **the ones that appear on the exam:**
+**You should see** "regular file" for `/etc/passwd`, "directory" for `/etc`, and an error for `/nonexistent`.
 
 | Test | True when |
 | --- | --- |
@@ -159,12 +173,36 @@ File tests — **the ones that appear on the exam:**
 | **`-d DIR`** | **Exists and is a directory** |
 | **`-e PATH`** | **Exists, any type** |
 | `-r`, `-w`, `-x` | Readable / writable / executable |
-| `-s FILE` | Exists and is non-empty |
-| `-L FILE` | Is a symbolic link |
 | `-z STRING` | **The string is empty** |
 | `-n STRING` | The string is non-empty |
 
-String and numeric comparisons:
+**Order matters:** test `-d` before `-f`, and `-e` last. **Quote variables:** `[[ -f "$file" ]]`.
+
+Three test syntaxes exist: `test EXPR`, `[ EXPR ]` (spaces mandatory), **`[[ EXPR ]]`** (bash — use this), and **`(( EXPR ))`** (arithmetic).
+
+### 5. Numeric comparison — and the `>` trap
+
+Numbers use `-eq`, `-lt`, `-gt`; strings use `=`, `!=`. Inside `[ ]`, `>` performs *redirection* and creates a file:
+
+```bash
+sudo tee /root/demo-numtest.sh >/dev/null <<'EOF'
+#!/bin/bash
+NUM="${1:-5}"
+if [[ $NUM -lt 10 ]]; then
+    echo "$NUM is less than 10"
+elif [[ $NUM -eq 10 ]]; then
+    echo "$NUM equals 10"
+else
+    echo "$NUM is greater than 10"
+fi
+EOF
+sudo chmod +x /root/demo-numtest.sh
+sudo /root/demo-numtest.sh 5
+sudo /root/demo-numtest.sh 10
+sudo /root/demo-numtest.sh 42
+```
+
+**You should see** less than, equal to, and greater than messages for the three runs.
 
 | String | Numeric | Meaning |
 | --- | --- | --- |
@@ -174,344 +212,388 @@ String and numeric comparisons:
 | `>` | **`-gt`** | Greater than |
 | | **`-le`, `-ge`** | Less/greater or equal |
 
-**Numbers use `-eq`, `-lt`, `-gt`; strings use `=`, `!=`.** Using `>` for numbers inside `[ ]` performs *redirection* and creates a file:
+The arithmetic form is also available: `if (( NUM < 10 )); then` and `(( count++ ))`.
+
+Regex matching (bash only, inside `[[ ]]`):
 
 ```bash
-[ 5 > 3 ]           # creates a file called 3
-[ 5 -gt 3 ]         # correct
-(( 5 > 3 ))         # also correct
+if [[ "$input" =~ ^[0-9]+$ ]]; then echo "numeric"; fi
 ```
 
-Combining:
+### 6. `for` loops — lists and ranges
 
 ```bash
-if [[ -f "$file" && -r "$file" ]]; then ...
-if [[ $x -eq 1 || $y -eq 2 ]]; then ...
-if [[ ! -d "$dir" ]]; then ...
-if [ -f "$f" ] && [ -r "$f" ]; then ...       # POSIX form
+sudo tee /root/demo-for.sh >/dev/null <<'EOF'
+#!/bin/bash
+echo "Literal list:"
+for i in one two three; do echo "  $i"; done
+echo "Range 1-5:"
+for i in {1..5}; do echo "  $i"; done
+echo "Evens 2-10:"
+for i in {2..10..2}; do echo "  $i"; done
+EOF
+sudo chmod +x /root/demo-for.sh
+sudo /root/demo-for.sh
 ```
 
-Regex matching, bash only:
+**You should see** three words, numbers 1 through 5, then even numbers 2, 4, 6, 8, 10.
+
+C-style loops work when the limit is a variable (brace expansion `{1..$n}` does **not** expand `$n`):
 
 ```bash
-if [[ "$input" =~ ^[0-9]+$ ]]; then
-    echo "numeric"
-fi
+n=5
+for (( i=1; i<=n; i++ )); do echo "$i"; done
 ```
 
-`case` for several fixed values:
+Loop control: `continue` skips an iteration; `break` leaves the loop.
+
+### 7. Loop over files and command output
+
+The glob must be **unquoted** so the shell expands it:
 
 ```bash
-case "$1" in
-    start)   echo "starting" ;;
-    stop)    echo "stopping" ;;
-    restart) echo "restarting" ;;
-    *)       echo "Usage: $0 {start|stop|restart}" >&2; exit 1 ;;
-esac
-```
-
-**Note `;;` at the end of each branch and `esac` to close.**
-
-### Loops
-
-```bash
-# A literal list
-for i in one two three; do
-    echo "$i"
-done
-
-# A numeric range
-for i in {1..10}; do
-    echo "$i"
-done
-for i in {0..20..5}; do echo "$i"; done       # step of 5
-
-# C-style
-for (( i=1; i<=10; i++ )); do
-    echo "$i"
-done
-
-# Files — note NO quotes around the glob
+sudo tee /root/demo-glob.sh >/dev/null <<'EOF'
+#!/bin/bash
 for f in /etc/*.conf; do
-    echo "$f"
-done
-
-# Command output
-for u in $(cut -d: -f1 /etc/passwd); do
-    echo "$u"
-done
-
-# Script arguments
-for a in "$@"; do
-    echo "$a"
-done
+    [[ -f "$f" ]] || continue
+    lines=$(wc -l < "$f")
+    printf "%-30s %5d\n" "$f" "$lines"
+done | head -5
+EOF
+sudo chmod +x /root/demo-glob.sh
+sudo /root/demo-glob.sh
 ```
 
+**You should see** up to five `.conf` files with line counts. If no files match, bash passes the literal pattern — the `[[ -f "$f" ]]` guard skips it.
+
+Command output in a loop:
+
 ```bash
-# while — read a file line by line
-while read -r line; do
-    echo "$line"
-done < /etc/hosts
-
-# while with a condition
-count=1
-while [[ $count -le 5 ]]; do
-    echo "$count"
-    (( count++ ))
-done
-
-# until — the inverse
-until [[ $count -gt 10 ]]; do
-    (( count++ ))
-done
+for u in $(cut -d: -f1 /etc/passwd); do echo "$u"; done | head -3
 ```
 
-**`while read -r line; do ... done < file` is the canonical way to process a file line by line.**
+**You should see** the first three usernames from `/etc/passwd`.
 
-- **`-r`** stops backslashes being interpreted. Always use it.
-- **The redirection goes after `done`.**
-- **Reading from a pipe puts the loop in a subshell**, so variables set inside it are lost afterwards:
+### 8. `while read` — process a file line by line
+
+**Never `for line in $(cat file)`** — it splits on whitespace, not lines.
 
 ```bash
-cat file | while read -r l; do count=$((count+1)); done
-echo "$count"                    # EMPTY — the loop ran in a subshell
+sudo tee /root/demo-users.txt >/dev/null <<'EOF'
+root
+bin
+nosuchuser_xyz
+EOF
 
-while read -r l; do count=$((count+1)); done < file
-echo "$count"                    # correct
+sudo tee /root/demo-read.sh >/dev/null <<'EOF'
+#!/bin/bash
+while read -r name; do
+    [[ -z "$name" ]] && continue
+    if id "$name" &>/dev/null; then
+        echo "EXISTS  : $name"
+    else
+        echo "MISSING : $name"
+    fi
+done < /root/demo-users.txt
+EOF
+sudo chmod +x /root/demo-read.sh
+sudo /root/demo-read.sh
 ```
 
-Loop control:
+**You should see** EXISTS for `root` and `bin`, MISSING for `nosuchuser_xyz`.
+
+| Element | Why |
+| --- | --- |
+| **`-r`** | **Do not interpret backslashes — always use it** |
+| **`< "$FILE"` after `done`** | **Not a pipe — avoids subshell** |
+| `[[ -z "$line" ]] && continue` | Skip blank lines |
+
+**Piping into `while` runs the loop in a subshell** — variables set inside are lost afterwards. Use `< file` or `< <(command)` instead.
+
+### 9. Command substitution and arithmetic
+
+Capture command output with `$(...)`, not backticks:
 
 ```bash
-for i in {1..10}; do
-    [[ $i -eq 3 ]] && continue       # skip this iteration
-    [[ $i -eq 8 ]] && break          # leave the loop
-    echo "$i"
-done
-```
-
-### Command substitution
-
-```bash
+sudo tee /root/demo-subst.sh >/dev/null <<'EOF'
+#!/bin/bash
 count=$(ls /etc | wc -l)
 today=$(date +%F)
-users=$(getent passwd | wc -l)
-hostname=$(hostname -s)
-echo "There are $count files as of $today"
-```
-
-**Use `$(...)`, not backticks.** It nests, and it is far easier to read:
-
-```bash
-result=$(echo $(date +%Y)-$(date +%m))
-```
-
-Arithmetic:
-
-```bash
+host=$(hostname -s)
+echo "Host $host has $count entries in /etc as of $today"
 total=$(( 5 + 3 ))
-(( count++ ))
-(( total = total * 2 ))
-avg=$(( sum / n ))
-echo $(( 10 / 3 ))               # 3 — integer only
-echo "scale=2; 10/3" | bc        # 3.33 — bc for decimals
+echo "5 + 3 = $total"
+echo "10 / 3 = $(( 10 / 3 ))"
+EOF
+sudo chmod +x /root/demo-subst.sh
+sudo /root/demo-subst.sh
 ```
 
-**Bash arithmetic is integer-only.** Use `bc` or `awk` for decimals.
+**You should see** host info, `5 + 3 = 8`, and `10 / 3 = 3` (integer division only — use `bc` or `awk` for decimals).
 
-Quoting:
+Quoting matters:
 
 | Form | Behaviour |
 | --- | --- |
 | `"$var"` | **Expands. Use this** |
 | `'$var'` | Literal, no expansion |
 | `$var` | Expands, but **word-splits on whitespace** |
-| `"$(cmd)"` | Expands the command output, preserving spaces |
+| `"$(cmd)"` | Expands command output, preserving spaces |
 
-**Quote every variable expansion unless you specifically want word splitting.** An unquoted `$file` containing a space becomes two arguments.
+**Quote every variable expansion unless you specifically want word splitting.**
 
-### Exit status
+### 10. Exit status — `if command; then`
 
-```bash
-command
-echo $?                          # 0 = success, non-zero = failure
-```
+Test a command's success directly — no `[[ ]]` needed:
 
 ```bash
-if grep -q "pattern" file; then
-    echo "found"
-fi
-
-if ! systemctl is-active --quiet httpd; then
-    echo "httpd is not running"
-fi
-
-command && echo "worked"
-command || echo "failed"
-command && echo ok || echo fail
-```
-
-**`if command; then` tests the command's exit status directly** — no `[[ ]]` needed. This is the idiomatic way to act on success or failure:
-
-```bash
-if id "$1" &>/dev/null; then
-    echo "user exists"
-fi
-```
-
-Exiting:
-
-```bash
-exit 0                           # success
-exit 1                           # failure
-```
-
-**A task saying "exit with a non-zero status" means `exit 1`.**
-
-`set` options for robustness:
-
-```bash
-set -e                           # exit on any error
-set -u                           # error on an undefined variable
-set -o pipefail                  # a pipeline fails if any element fails
-set -euo pipefail                # all three
-set -x                           # print each command as it runs — for DEBUGGING
-```
-
-**`set -x` is the fastest way to debug a script.** Also:
-
-```bash
-bash -x ./script.sh
-bash -n ./script.sh              # syntax check, run nothing
-```
-
-### Reading input
-
-```bash
-read -p "Enter a name: " name
-read -p "Password: " -s pass; echo
-read -r -p "Continue? [y/N] " answer
-[[ "$answer" == [yY] ]] && echo "proceeding"
-```
-
-**Interactive input is rarely what an exam task wants** — scripts are usually graded by running them with arguments. Prefer `$1` unless the task says "prompt".
-
-### Output and redirection
-
-```bash
-echo "normal output"
-echo "error message" >&2         # to stderr
-printf "%-10s %5d\n" "name" 42
-printf "%s: %s\n" "$key" "$value"
-
-command > /tmp/out 2>/tmp/err
-command &> /tmp/all
-command > /tmp/out 2>&1
-command &>/dev/null              # discard everything
-```
-
-**Errors and usage messages go to stderr with `>&2`.** See `02-redirection-pipes.md`.
-
-### Useful text processing inside scripts
-
-```bash
-cut -d: -f1 /etc/passwd
-awk -F: '{print $1, $3}' /etc/passwd
-awk -F: '$3 >= 1000 {print $1}' /etc/passwd
-awk '{sum+=$1} END {print sum}' numbers.txt
-sed 's/old/new/g' file
-sed -n '5p' file
-grep -c pattern file
-sort -u file
-wc -l < file
-tr 'a-z' 'A-Z'
-```
-
-**`awk -F: '{print $1}'` and `cut -d: -f1` are the two you will reach for most.**
-
-### A worked example
-
-```bash
+sudo tee /root/demo-exit.sh >/dev/null <<'EOF'
 #!/bin/bash
-#
-# useradd-batch.sh — create users listed in a file
-#
+if grep -q root /etc/passwd; then
+    echo "root account found"
+fi
+if ! systemctl is-active --quiet sshd; then
+    echo "sshd is not running"
+else
+    echo "sshd is active"
+fi
+command && echo "&& worked" || echo "|| failed"
+EOF
+sudo chmod +x /root/demo-exit.sh
+sudo /root/demo-exit.sh
+grep -q root /etc/passwd; echo "grep exit status: $?"
+```
 
+**You should see** root found, sshd status, and `grep exit status: 0`. **`$?` is 0 for success, non-zero for failure.**
+
+Many commands are designed for this: `systemctl is-active --quiet`, `id user &>/dev/null`, `grep -q`, `rpm -q`.
+
+Exiting: `exit 0` success, `exit 1` failure. Errors go to stderr: `echo "Error" >&2`.
+
+### 11. `case` for subcommands
+
+Clearer than a chain of `elif` when matching one variable against fixed values:
+
+```bash
+sudo tee /root/demo-case.sh >/dev/null <<'EOF'
+#!/bin/bash
+case "$1" in
+    start)   echo "starting" ;;
+    stop)    echo "stopping" ;;
+    restart) echo "restarting" ;;
+    *)       echo "Usage: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac
+EOF
+sudo chmod +x /root/demo-case.sh
+sudo /root/demo-case.sh start
+sudo /root/demo-case.sh bogus; echo "status: $?"
+```
+
+**You should see** `starting`, then a usage message with status `1`. Note **`;;`** at each branch end and **`esac`** to close. Patterns are globs, not regexes. Put `*)` last.
+
+### 12. Parameter expansion — defaults and trimming
+
+```bash
+sudo tee /root/demo-params.sh >/dev/null <<'EOF'
+#!/bin/bash
+TARGET="${1:-/var}"
+COUNT="${2:-5}"
+echo "Target: $TARGET  Count: $COUNT"
+FILE="/var/log/messages.log"
+echo "Basename: ${FILE##*/}"
+echo "Dirname:  ${FILE%/*}"
+echo "No .log:  ${FILE%.log}"
+EOF
+sudo chmod +x /root/demo-params.sh
+sudo /root/demo-params.sh
+sudo /root/demo-params.sh /usr 3
+```
+
+**You should see** default `/var` and `5`, then `/usr` and `3`, plus basename/dirname trimming.
+
+| Form | Behaviour |
+| --- | --- |
+| **`${1:-default}`** | **Use `default` if `$1` is unset or empty** |
+| `${1-default}` | Use `default` only if `$1` is unset |
+| **`${1:?message}`** | **Error and exit if unset** |
+| `${var%pattern}` | Remove shortest match from end |
+| `${var##pattern}` | Remove longest match from start |
+
+### 13. Debug a silent script
+
+When a script produces no output, trace it:
+
+```bash
+sudo tee /root/demo-broken.sh >/dev/null <<'EOF'
+#!/bin/bash
+FILE=/root/no-such-file.txt
+if [ -f $FILE ]; then
+    echo "file exists"
+fi
+EOF
+sudo chmod +x /root/demo-broken.sh
+sudo /root/demo-broken.sh
+bash -x /root/demo-broken.sh
+bash -n /root/demo-broken.sh && echo "syntax OK"
+```
+
+**You should see** no output from the script itself. **`bash -x`** shows the `[ -f ... ]` test was false — the file does not exist, so the body never ran.
+
+| Technique | Finds |
+| --- | --- |
+| **`bash -n script`** | **Syntax errors without running** |
+| **`bash -x script`** | **Which commands ran and with what values** |
+| `set -x` / `set +x` | Trace a specific section |
+| **`set -u`** | **Undefined variable use** |
+| `set -euo pipefail` | Exit on error, undefined vars, pipeline failures |
+
+Common silent failures: missing file (condition false), no `chmod +x`, CRLF line endings (`sed -i 's/\r$//'`), unquoted empty variables in `[ ]`.
+
+### 14. A complete example — everything together
+
+This script uses argument checks, file tests, `while read`, exit status, and counters:
+
+```bash
+sudo tee /root/demo-batch.sh >/dev/null <<'EOF'
+#!/bin/bash
 if [[ $# -ne 1 ]]; then
     echo "Usage: $0 <userfile>" >&2
     exit 1
 fi
-
 USERFILE="$1"
-
 if [[ ! -f "$USERFILE" ]]; then
     echo "Error: $USERFILE does not exist" >&2
     exit 2
 fi
-
 created=0
 skipped=0
-
 while read -r username; do
     [[ -z "$username" ]] && continue
     [[ "$username" =~ ^# ]] && continue
-
     if id "$username" &>/dev/null; then
-        echo "SKIP: $username already exists"
+        echo "SKIP: $username"
         (( skipped++ ))
     else
-        useradd "$username" && echo "OK: created $username"
+        useradd "$username" 2>/dev/null && echo "OK: $username"
         (( created++ ))
     fi
 done < "$USERFILE"
-
 echo "Created: $created  Skipped: $skipped"
 exit 0
+EOF
+sudo chmod +x /root/demo-batch.sh
 ```
 
-**Everything the objectives ask for is in that script**: argument processing, `$#`, conditionals, file tests, a `while read` loop, command exit status, command substitution implicitly, and a meaningful exit code.
+**You should see** the script created with execute permission. Run it only if you have a user list ready — the pattern is what matters for the exam.
 
-## Tasks
+### Mini checkpoint
+
+Before the practice tasks, you should be able to explain:
+
+| Concept | Key point |
+| --- | --- |
+| Shebang | `#!/bin/bash` on line 1, no blank line before |
+| Execute bit | `chmod +x` — confirm with `ls -l` |
+| Positional params | `$1`, `$#`, `"$@"` (not `"$*"`) |
+| Usage idiom | `if [[ $# -ne 1 ]]; then echo "Usage..." >&2; exit 1; fi` |
+| File tests | `-f` file, `-d` dir, `-e` exists; quote `"$var"` |
+| Numeric compare | `-eq -lt -gt` for numbers; `>` inside `[ ]` redirects |
+| `for` loops | `{1..10}` literal only; use `seq` or `(( ))` for variables |
+| `while read` | `done < file` with `-r`; never `for x in $(cat file)` |
+| Subshell trap | Never pipe into `while` if you need variables after |
+| Command subst | `$(cmd)` not backticks; `"$var"` always |
+| Exit status | `if command; then`; `$?`; `exit 1` for failure |
+| `case` | `;;` per branch, `*)` last, `esac` to close |
+| Param expansion | `${1:-default}`, `${var##*/}`, `${var%pattern}` |
+| Debugging | `bash -n` syntax, `bash -x` trace, `set -u` for typos |
+
+If any row is blank in your head, re-run the step above that covers it.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Write a script at `/root/hello.sh` that prints "Hello, World", make it executable, and run it. Show what happens if you forget the execute bit.
 
+> Hint: shebang, `echo`, `chmod +x`, confirm with `ls -l`. Follow-along step 1.
+
 **Task 2.** Write a script that prints its own name, its first two arguments, and how many arguments it received.
+
+> Hint: `$0`, `$1`, `$2`, `$#`, `"$@"`. Follow-along step 2.
 
 **Task 3.** Write a script that requires exactly one argument, printing a usage message to stderr and exiting non-zero otherwise.
 
+> Hint: the usage idiom with `$# -ne 1`, `>&2`, and `exit 1`. Follow-along step 3.
+
 **Task 4.** Write a script that takes a path as an argument and reports whether it is a regular file, a directory, or does not exist.
+
+> Hint: test `-d` before `-f`, then `-e`; quote `"$1"`. Follow-along step 4.
 
 **Task 5.** Write a script that takes a number and prints whether it is less than, equal to, or greater than 10.
 
+> Hint: `-lt`, `-eq`, `-gt` inside `[[ ]]`. Follow-along step 5.
+
 **Task 6.** Write a script that loops through the numbers 1 to 10 and prints only the even ones.
+
+> Hint: `for i in {1..10}` with modulo, `{2..10..2}`, or `continue`. Follow-along step 6.
 
 **Task 7.** Write a script that loops over every `.conf` file in `/etc` and prints the filename and its line count.
 
+> Hint: unquoted glob, `[[ -f "$f" ]]`, `wc -l < "$f"`, `printf`. Follow-along step 7.
+
 **Task 8.** Write a script that reads `/root/users.txt` line by line and reports for each name whether that user exists on the system.
+
+> Hint: `while read -r`, `id "$name" &>/dev/null`. Follow-along step 8.
 
 **Task 9.** Write a script that creates every user listed in a file given as an argument, skipping any that already exist, and reports a count at the end.
 
+> Hint: `$1` and `$#`, `while read`, `useradd`, `if id ...; then`. Follow-along step 14.
+
 **Task 10.** Write a script that accepts any number of arguments and processes each one, correctly handling arguments that contain spaces.
+
+> Hint: `for arg in "$@"` — compare with `$@` and `"$*"`. Follow-along step 2.
 
 **Task 11.** Write a script that captures the output of a command into a variable and uses it in a calculation.
 
+> Hint: `$(command)` and `$(( ))` arithmetic. Follow-along step 9.
+
 **Task 12.** Write a script that tests whether a service is active and reports accordingly, using the command's exit status rather than parsing its output.
+
+> Hint: `systemctl is-active --quiet`, `if command; then`. Follow-along step 10.
 
 **Task 13.** Write a script implementing `start`, `stop`, and `status` subcommands using `case`.
 
+> Hint: `case "$1" in ... ;; esac` with `*)` catch-all. Follow-along step 11.
+
 **Task 14.** Write a script that reports the top five largest directories under a path given as an argument, defaulting to `/var` if none is given.
+
+> Hint: `${1:-/var}`, `du`, `sort -rh`, `head`. Follow-along step 12.
 
 **Task 15.** Write a script that checks all local user accounts and reports which have UID 1000 or greater.
 
+> Hint: `while IFS=: read -r user _ uid ...` from `/etc/passwd`, or `awk -F:`. Follow-along step 8.
+
 **Task 16.** Write a script that reports whether each filesystem is over a threshold percentage of usage, with the threshold as an optional argument.
+
+> Hint: `${1:-80}`, `df -hP`, `while read`, `< <(command)` to avoid subshell. Follow-along step 12.
 
 **Task 17.** Write a script that validates its argument is a positive integer, using a regular expression.
 
+> Hint: `[[ "$INPUT" =~ ^[1-9][0-9]*$ ]]` inside `[[ ]]`. Follow-along step 5.
+
 **Task 18.** Debug a script that produces no output and exits silently.
+
+> Hint: `bash -x`, `bash -n`, check if a condition was false. Follow-along step 13.
 
 **Task 19.** Explain why a counter incremented inside a piped `while` loop is empty afterwards, and fix it.
 
+> Hint: pipeline subshell — use `done < file` or `done < <(cmd)`. Follow-along step 8.
+
 **Task 20.** Make a script run automatically every day at 02:00.
+
+> Hint: cron in `/etc/cron.d/` or `crontab -e`; absolute paths, `chmod +x`, enable `crond`. See `19-scheduling-cron-at.md`.
 
 ---
 
@@ -2340,6 +2422,283 @@ head -1 /root/myscript.sh                 # #!/bin/bash ?
 bash -n /root/myscript.sh                 # syntax OK?
 /root/myscript.sh testarg; echo $?        # does it work from an absolute path?
 ```
+
+## Quick Reference
+
+Come back here when you need a construct you forgot — not before your first pass through Follow Along.
+
+### Anatomy of a script
+
+```bash
+#!/bin/bash
+# Description of what this does
+
+USER_LIST="/root/users.txt"
+
+if [[ -f "$USER_LIST" ]]; then
+    while read -r name; do
+        echo "Processing $name"
+    done < "$USER_LIST"
+else
+    echo "File not found" >&2
+    exit 1
+fi
+
+exit 0
+```
+
+```bash
+vim myscript.sh
+chmod +x myscript.sh
+./myscript.sh
+bash myscript.sh                 # runs without the execute bit
+```
+
+**Three things every script needs:**
+
+1. **`#!/bin/bash` on line 1.** Without it the script may be interpreted by `sh`.
+2. **`chmod +x`.** Without it, `./script.sh` gives "Permission denied".
+3. **An absolute path or `./`.** `script.sh` alone fails because `.` is not in `PATH`.
+
+### Positional parameters
+
+| Variable | Meaning |
+| --- | --- |
+| `$0` | The script's own name |
+| **`$1`, `$2`, `$3`** | **The first, second, third argument** |
+| `${10}` | **The tenth — braces required beyond 9** |
+| **`$#`** | **The number of arguments** |
+| **`$@`** | **All arguments, each separately quoted** |
+| `$*` | All arguments as one string |
+| `$?` | **The exit status of the last command** |
+| `$$` | The script's process ID |
+
+**Use `"$@"`, not `"$*"`.** Usage idiom:
+
+```bash
+if [[ $# -lt 1 ]]; then
+    echo "Usage: $0 <filename>" >&2
+    exit 1
+fi
+```
+
+### Conditionals and tests
+
+```bash
+if [[ condition ]]; then
+    commands
+elif [[ other ]]; then
+    commands
+else
+    commands
+fi
+```
+
+| Syntax | Notes |
+| --- | --- |
+| `test EXPR` | The original |
+| `[ EXPR ]` | POSIX. **Spaces inside brackets mandatory** |
+| **`[[ EXPR ]]`** | **Bash. Safer, supports `=~` and `&&`** |
+| `(( EXPR ))` | **Arithmetic** |
+
+**File tests:**
+
+| Test | True when |
+| --- | --- |
+| **`-f FILE`** | **Regular file** |
+| **`-d DIR`** | **Directory** |
+| **`-e PATH`** | **Exists, any type** |
+| `-r`, `-w`, `-x` | Readable / writable / executable |
+| `-s FILE` | Non-empty |
+| `-L FILE` | Symbolic link |
+| `-z STRING` | **Empty string** |
+| `-n STRING` | Non-empty string |
+
+**Comparisons:**
+
+| String | Numeric | Meaning |
+| --- | --- | --- |
+| `=` or `==` | **`-eq`** | Equal |
+| `!=` | **`-ne`** | Not equal |
+| `<` | **`-lt`** | Less than |
+| `>` | **`-gt`** | Greater than |
+| | **`-le`, `-ge`** | Less/greater or equal |
+
+**Numbers use `-eq`, `-lt`, `-gt`; strings use `=`, `!=`.** Inside `[ ]`, `>` redirects:
+
+```bash
+[ 5 > 3 ]           # creates a file called 3 — WRONG
+[ 5 -gt 3 ]         # correct
+(( 5 > 3 ))         # also correct
+```
+
+Combining: `if [[ -f "$file" && -r "$file" ]]; then`
+
+Regex (bash only): `if [[ "$input" =~ ^[0-9]+$ ]]; then`
+
+### `case`
+
+```bash
+case "$1" in
+    start)   echo "starting" ;;
+    stop)    echo "stopping" ;;
+    restart) echo "restarting" ;;
+    *)       echo "Usage: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac
+```
+
+Note `;;` at each branch and `esac` to close. Patterns are globs, not regexes.
+
+### Loops
+
+```bash
+# Literal list
+for i in one two three; do echo "$i"; done
+
+# Numeric range (literal only — no variables)
+for i in {1..10}; do echo "$i"; done
+for i in {0..20..5}; do echo "$i"; done
+
+# C-style (variables OK)
+for (( i=1; i<=10; i++ )); do echo "$i"; done
+
+# Files — NO quotes around glob
+for f in /etc/*.conf; do echo "$f"; done
+
+# Command output
+for u in $(cut -d: -f1 /etc/passwd); do echo "$u"; done
+
+# Script arguments
+for a in "$@"; do echo "$a"; done
+```
+
+```bash
+# while — read a file line by line
+while read -r line; do
+    echo "$line"
+done < /etc/hosts
+
+# while with condition
+count=1
+while [[ $count -le 5 ]]; do
+    echo "$count"
+    (( count++ ))
+done
+```
+
+**`while read -r line; do ... done < file` is canonical.** Always `-r`. Redirection after `done`. **Never pipe into `while` if you need variables after** — the loop runs in a subshell.
+
+Loop control: `continue` (skip iteration), `break` (leave loop).
+
+### Command substitution and arithmetic
+
+```bash
+count=$(ls /etc | wc -l)
+today=$(date +%F)
+total=$(( 5 + 3 ))
+(( count++ ))
+echo $(( 10 / 3 ))               # 3 — integer only
+echo "scale=2; 10/3" | bc        # decimals via bc
+```
+
+**Use `$(...)`, not backticks.**
+
+### Quoting
+
+| Form | Behaviour |
+| --- | --- |
+| `"$var"` | **Expands. Use this** |
+| `'$var'` | Literal, no expansion |
+| `$var` | Expands, **word-splits on whitespace** |
+| `"$(cmd)"` | Command output, spaces preserved |
+
+**Quote every variable expansion unless you want word splitting.**
+
+### Exit status
+
+```bash
+command
+echo $?                          # 0 = success, non-zero = failure
+
+if grep -q "pattern" file; then echo "found"; fi
+if ! systemctl is-active --quiet httpd; then echo "not running"; fi
+command && echo "worked" || echo "failed"
+
+exit 0                           # success
+exit 1                           # failure
+```
+
+**`if command; then` tests exit status directly** — idiomatic for `id`, `grep -q`, `systemctl is-active --quiet`.
+
+### Parameter expansion
+
+| Form | Behaviour |
+| --- | --- |
+| **`${1:-default}`** | **Default if unset or empty** |
+| `${1-default}` | Default only if unset |
+| `${1:=default}` | Default and assign |
+| **`${1:?message}`** | **Error if unset** |
+| `${1:+value}` | Use value only if set |
+| `${var%pattern}` | Remove shortest match from end |
+| `${var%%pattern}` | Remove longest match from end |
+| `${var#pattern}` | Remove shortest match from start |
+| `${var##pattern}` | Remove longest match from start |
+| `${var/old/new}` | Replace first occurrence |
+| `${var//old/new}` | Replace all |
+| `${#var}` | String length |
+
+### Debugging
+
+```bash
+bash -n ./script.sh              # syntax check, run nothing
+bash -x ./script.sh              # trace execution
+set -x                           # trace from here
+set +x                           # stop tracing
+set -euo pipefail                # exit on error, undefined vars, pipe failures
+set -u                           # error on undefined variable
+```
+
+| Symptom | Cause |
+| --- | --- |
+| No output at all | Condition was false; body never ran |
+| Permission denied | **No `chmod +x`** |
+| `bad interpreter: ^M` | **CRLF line endings** |
+| `unary operator expected` | Unquoted empty variable in `[ ]` |
+| Variable empty after loop | **Loop ran in subshell (piped while)** |
+| Wrong line counts | `for` over `$(cat file)` instead of `while read` |
+
+### Reading input
+
+```bash
+read -p "Enter a name: " name
+read -p "Password: " -s pass; echo
+```
+
+**Exam scripts are usually graded with arguments (`$1`), not prompts.**
+
+### Output and redirection
+
+```bash
+echo "normal output"
+echo "error message" >&2         # stderr
+printf "%-10s %5d\n" "name" 42
+command > /tmp/out 2>/tmp/err
+command &> /tmp/all
+command &>/dev/null              # discard everything
+```
+
+### Text processing inside scripts
+
+```bash
+cut -d: -f1 /etc/passwd
+awk -F: '{print $1, $3}' /etc/passwd
+awk -F: '$3 >= 1000 {print $1}' /etc/passwd
+grep -c pattern file
+wc -l < file
+sort -u file
+```
+
+**`awk -F: '{print $1}'` and `cut -d: -f1` are the two you will reach for most.**
 
 ## Exam Tips
 

@@ -4,316 +4,258 @@
 
 **Do the repository task early.** Every later task that says "install and configure X" depends on working repositories. If repos are broken and you leave it until minute 120, you lose every dependent task.
 
-## Concept Refresher
+## Before You Start
 
-### dnf versus rpm
-
-| | **dnf** | **rpm** |
-| --- | --- | --- |
-| Resolves dependencies | **Yes** | **No** |
-| Downloads from repositories | Yes | No |
-| Use for | **Installing, updating, removing, searching** | **Querying what is installed** |
-| Install a local file | `dnf install ./pkg.rpm` (resolves deps) | `rpm -ivh pkg.rpm` (fails on missing deps) |
-
-**Rule: install with `dnf`, query with `rpm`.** `dnf install ./local.rpm` is better than `rpm -ivh local.rpm` because it pulls in dependencies from your repos.
-
-`yum` is a symlink to `dnf` on RHEL 8+, so every `yum` command still works.
-
-### dnf: the commands
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
-sudo dnf install httpd
-sudo dnf install -y httpd vim tar          # several at once
-sudo dnf install ./local-package.rpm       # a local file, WITH dependency resolution
-sudo dnf install https://host/pkg.rpm      # straight from a URL
-
-sudo dnf remove httpd
-sudo dnf autoremove                        # drop orphaned dependencies
-
-sudo dnf update                            # everything
-sudo dnf update httpd                      # one package
-sudo dnf upgrade                           # a synonym for update
-sudo dnf check-update                      # what is available, without installing
-sudo dnf downgrade httpd                   # go back a version
-sudo dnf reinstall httpd
-
-dnf search httpd                           # search names and summaries
-dnf search all "web server"                # search descriptions too
-dnf info httpd                             # details about a package
-dnf list installed                         # everything installed
-dnf list installed | grep httpd
-dnf list available
-dnf list httpd                             # installed and available versions
-
-dnf provides /etc/httpd/conf/httpd.conf    # WHICH PACKAGE PROVIDES THIS FILE
-dnf provides */semanage                    # find the package for a command
-dnf repoquery -l httpd                     # files in a package, without installing it
-dnf deplist httpd                          # dependencies
-
-dnf history                                # transaction history
-dnf history info 5                         # details of transaction 5
-sudo dnf history undo 5                    # REVERSE transaction 5
-sudo dnf history redo 5
-sudo dnf history rollback 5
-
-sudo dnf clean all                         # clear the metadata cache
-sudo dnf makecache                         # rebuild it
-dnf repolist                               # enabled repositories
-dnf repolist --all                         # including disabled
-dnf repoinfo                               # detailed repository information
+vagrant ssh server1    # or ssh into your practice VM
 ```
 
-**`dnf provides` is the one that saves you.** When you know you need `semanage` but not which package supplies it:
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+Installing packages before you understand `dnf provides` feels fine until the exam asks for a command you have never seen and you cannot find the package name.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. List enabled repositories
+
+```bash
+dnf repolist
+```
+
+**You should see** a table of repository IDs and names — at minimum `baseos` and `appstream` on a typical Rocky or AlmaLinux VM.
+
+Every `dnf install` pulls from these repos. If this list is empty, nothing else in this file works.
+
+### 2. Search for a package
+
+```bash
+dnf search httpd
+dnf info httpd
+```
+
+**You should see** several packages whose names or summaries mention Apache. `dnf info` shows version, size, repository, and description for one package.
+
+Use `dnf search` when you know roughly what you want; use `dnf info` when you know the exact name.
+
+### 3. Install with dnf
+
+```bash
+sudo dnf install -y httpd
+rpm -q httpd
+```
+
+**You should see** dnf resolve dependencies and install. `rpm -q httpd` prints the installed version, like `httpd-2.4.57-11.el9.x86_64`.
+
+**Rule: install with `dnf`, query with `rpm`.** dnf resolves dependencies; `rpm -ivh` alone does not.
+
+### 4. List configuration files for a package
+
+```bash
+rpm -qc httpd
+```
+
+**You should see** a short list of config files — `/etc/httpd/conf/httpd.conf` and files under `/etc/httpd/conf.d/`.
+
+**`rpm -qc` is the fast way to find which files you edit** after installing a service. Compare with `rpm -ql httpd | wc -l`, which lists hundreds of files.
+
+### 5. Find which package owns a file
+
+```bash
+rpm -qf /etc/chrony.conf
+```
+
+**You should see** something like `chrony-4.5-1.el9.x86_64`.
+
+Use `rpm -qf` for a file that already exists on disk. Use `dnf provides` when the package might not be installed yet.
+
+### 6. Find which package provides a command
 
 ```bash
 dnf provides */semanage
-# policycoreutils-python-utils-3.6-2.el9.x86_64 : SELinux policy core python utilities
 ```
 
-Memorise that `semanage` comes from **`policycoreutils-python-utils`**. Without it, every SELinux port and fcontext task is impossible, and it is not always installed.
+**You should see** `policycoreutils-python-utils` listed as the provider of `/usr/sbin/semanage`.
 
-### Package groups
+**Memorise that package name.** `semanage` is required for every SELinux port-label and fcontext task, and it is not installed on a minimal system.
+
+Install it now:
 
 ```bash
-dnf group list
-dnf group list --available
-dnf group info "Development Tools"
-sudo dnf group install "Development Tools"
-sudo dnf group install @development         # the @ shorthand
-sudo dnf group remove "Development Tools"
-dnf group list --installed
+sudo dnf install -y policycoreutils-python-utils
+command -v semanage
 ```
 
-`dnf install @groupname` and `dnf group install "Group Name"` are equivalent. Quote names containing spaces.
+**You should see** `/usr/sbin/semanage`.
 
-### Modules and application streams
-
-RHEL 8 introduced modules for shipping multiple versions of the same software. RHEL 9 and 10 use them much less, but recognise the commands:
+### 7. List every file a package installed
 
 ```bash
-dnf module list
-dnf module list nodejs
-dnf module info nodejs:18
-sudo dnf module install nodejs:18
-sudo dnf module enable nodejs:18
-sudo dnf module disable nodejs
-sudo dnf module reset nodejs
-sudo dnf module switch-to nodejs:20
+rpm -ql chrony
 ```
 
-`reset` returns a module to no enabled stream, which you need before switching versions.
+**You should see** a long list of paths — binaries, configs, man pages, unit files.
 
-### rpm: querying
+For a package **not** installed, you would use `dnf repoquery -l chrony` instead.
 
-```bash
-rpm -qa                             # all installed packages
-rpm -qa | grep httpd
-rpm -q httpd                        # is this package installed, and which version
-rpm -qi httpd                       # detailed info
-rpm -ql httpd                       # LIST all files
-rpm -qc httpd                       # CONFIG files only
-rpm -qd httpd                       # DOCUMENTATION files only
-rpm -qf /etc/httpd/conf/httpd.conf  # which package owns this FILE
-rpm -q --changelog httpd | head
-rpm -q --scripts httpd              # install/uninstall scripts
-rpm -V httpd                        # VERIFY: what has changed since installation
-rpm -Va                             # verify everything (slow)
-rpm -qa --last | head               # most recently installed
-
-# Query a FILE that is not installed
-rpm -qip package.rpm
-rpm -qlp package.rpm
-
-# Install / upgrade / erase (prefer dnf for these)
-sudo rpm -ivh package.rpm           # install, verbose, hash progress
-sudo rpm -Uvh package.rpm           # upgrade or install
-sudo rpm -Fvh package.rpm           # freshen: upgrade only if already installed
-sudo rpm -e httpd                   # erase
-sudo rpm -ivh --nodeps package.rpm  # skip dependency checks. Avoid
-```
-
-**The four query flags to know cold: `-qa` all, `-qf` which package owns a file, `-ql` list files, `-qc` config files.**
-
-`rpm -V` output decodes as:
-
-```text
-S.5....T.  c /etc/httpd/conf/httpd.conf
-│ │    │   │
-│ │    │   └─ c = a config file
-│ │    └───── T = timestamp differs
-│ └────────── 5 = MD5 checksum differs (CONTENTS CHANGED)
-└──────────── S = size differs
-```
-
-Other codes: `M` mode, `U` owner, `G` group, `L` symlink path, `D` device. A `5` on a config file is expected if you edited it; a `5` on a binary is a red flag.
-
-### Repository files
-
-Repositories are defined in `/etc/yum.repos.d/*.repo`.
+### 8. Inspect repository configuration
 
 ```bash
 ls /etc/yum.repos.d/
-cat /etc/yum.repos.d/*.repo | head -20
+cat /etc/yum.repos.d/*.repo | head -30
 ```
 
-The format:
+**You should see** one or more `.repo` files. Each defines a repository with `[repo-id]`, `name=`, `baseurl=`, `enabled=`, and `gpgcheck=`.
 
-```text
-[repo-id]                     <- unique, no spaces, used on the command line
-name=Human Readable Name      <- REQUIRED
-baseurl=https://host/path/    <- REQUIRED (or mirrorlist/metalink)
-enabled=1                     <- 1 or 0
-gpgcheck=1                    <- verify package signatures
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
-```
+Repositories live here. **`dnf clean all` after editing any `.repo` file**, or stale metadata causes confusing errors.
 
-Valid `baseurl` schemes:
-
-```text
-baseurl=https://repo.example.com/rhel9/BaseOS/
-baseurl=http://repo.example.com/rhel9/AppStream/
-baseurl=ftp://repo.example.com/rhel9/
-baseurl=file:///mnt/iso/BaseOS            <- THREE slashes: file:// + /mnt
-```
-
-**`file:///` needs three slashes**: two from the scheme and one starting the absolute path. `file://mnt/iso` is wrong and produces a confusing error.
-
-Creating a repo file by hand:
+### 9. Package groups
 
 ```bash
-sudo tee /etc/yum.repos.d/local.repo <<'EOF'
-[local-baseos]
-name=Local BaseOS
-baseurl=file:///mnt/iso/BaseOS
-enabled=1
-gpgcheck=1
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
-
-[local-appstream]
-name=Local AppStream
-baseurl=file:///mnt/iso/AppStream
-enabled=1
-gpgcheck=1
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
-EOF
-
-sudo dnf clean all
-sudo dnf repolist
+dnf group list
+dnf group info "Development Tools"
 ```
 
-**Use a quoted heredoc (`<<'EOF'`)** so that `$releasever` and `$basearch`, if present, are written literally rather than expanded by your shell. This is a real and confusing failure mode.
+**You should see** available package groups. `group info` lists the packages inside a group.
 
-### dnf config-manager
+Install with `sudo dnf group install "Development Tools"` or the shorthand `sudo dnf install @development`.
 
-The tool-based alternative to hand-editing.
+### 10. Transaction history
 
 ```bash
-sudo dnf install -y dnf-plugins-core       # provides config-manager
-
-sudo dnf config-manager --add-repo https://repo.example.com/rhel9/
-sudo dnf config-manager --set-enabled repo-id
-sudo dnf config-manager --set-disabled repo-id
-dnf config-manager --dump                  # all settings
+dnf history | head -10
 ```
 
-On newer dnf the syntax is `dnf config-manager addrepo --from-repofile=...`. If `--add-repo` complains, hand-writing the `.repo` file is always available and always works. **When in doubt, write the file.**
+**You should see** a numbered list of recent dnf transactions with dates and actions.
 
-Temporarily using or ignoring a repo without changing config:
+**`dnf history undo N` reverses transaction N** — the fastest recovery from a mistaken install.
+
+### 11. Verify package integrity
 
 ```bash
-sudo dnf --disablerepo=* --enablerepo=local-baseos install httpd
-sudo dnf --enablerepo=epel install something
-sudo dnf --nogpgcheck install ./unsigned.rpm
+rpm -V httpd
 ```
 
-### GPG keys
+**You should see** no output if nothing has changed since installation.
+
+Edit the config and check again:
 
 ```bash
-ls /etc/pki/rpm-gpg/
-rpm -qa gpg-pubkey*                                     # imported keys
-rpm -qi gpg-pubkey-fd431d51-4ae0493b                    # details of one
-sudo rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
-sudo rpm --import https://host/RPM-GPG-KEY
+sudo sed -i 's/^#ServerName.*/ServerName localhost/' /etc/httpd/conf/httpd.conf
+rpm -V httpd
 ```
 
-If a repository has no key available and the task does not require signature checking, `gpgcheck=0` is acceptable. Prefer `gpgcheck=1` with a correct key when one exists.
+**You should see** a line like `S.5....T.  c /etc/httpd/conf/httpd.conf` — size, checksum, and timestamp differ on a config file. A `5` on a binary would be alarming.
 
-The key filename differs by distribution:
+### 12. Check for updates without installing
 
 ```bash
-ls /etc/pki/rpm-gpg/
-# RHEL:      RPM-GPG-KEY-redhat-release
-# Rocky:     RPM-GPG-KEY-Rocky-9
-# AlmaLinux: RPM-GPG-KEY-AlmaLinux-9
+dnf check-update | head
+echo $?
 ```
 
-### Mounting an ISO as a repository
+**You should see** available updates listed, or nothing. Exit code **100** means updates exist; **0** means none.
 
-A very common exam and lab pattern.
+### Mini checkpoint
 
-```bash
-sudo mkdir -p /mnt/iso
-sudo mount /dev/sr0 /mnt/iso                # or mount -o loop file.iso /mnt/iso
-ls /mnt/iso                                 # expect BaseOS and AppStream
+Before the practice tasks, you should be able to explain:
 
-# Make the mount persistent
-echo '/dev/sr0  /mnt/iso  iso9660  ro,nofail  0 0' | sudo tee -a /etc/fstab
-sudo findmnt --verify
-sudo mount -a
-```
+| Command | Does |
+| --- | --- |
+| `dnf install` | Install with dependency resolution |
+| `dnf provides */cmd` | Find which package supplies a command |
+| `rpm -q pkg` | Is it installed, which version |
+| `rpm -qf FILE` | Which package owns this file |
+| `rpm -ql pkg` | List all files in a package |
+| `rpm -qc pkg` | Config files only |
+| `rpm -V pkg` | Verify files unchanged since install |
+| `dnf repolist` | Enabled repositories |
+| `dnf history undo N` | Reverse a transaction |
 
-**Use `nofail`.** Without it, booting without the ISO attached drops you into emergency mode. See `16-boot-interrupt-root-recovery.md`.
+If any row is blank in your head, re-run the step above that covers it.
 
-### Subscription management (RHEL only)
+---
 
-Not present on Rocky or AlmaLinux.
+## Practice Tasks
 
-```bash
-sudo subscription-manager register --username=user --password=pass
-sudo subscription-manager attach --auto
-sudo subscription-manager repos --list
-sudo subscription-manager repos --enable=rhel-9-for-x86_64-baseos-rpms
-sudo subscription-manager status
-sudo subscription-manager unregister
-```
-
-On the exam you will normally be given a local or classroom repository rather than a subscription, so know this exists but expect to configure a `.repo` file.
-
-## Tasks
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** List all currently enabled repositories.
 
+> Hint: one word command, no flags required for the basics.
+
 **Task 2.** Configure a repository named `local-baseos` pointing at `file:///mnt/iso/BaseOS`, with GPG checking enabled, and confirm dnf can use it. Mount the installation ISO persistently first.
+
+> Hint: `fstab` with `nofail`, quoted heredoc for the `.repo` file, three slashes in `file:///`, then `dnf clean all`.
 
 **Task 3.** Determine which package provides the `semanage` command, then install it.
 
+> Hint: follow-along step 6.
+
 **Task 4.** Install the `httpd` package, confirm the version installed, and list its configuration files.
+
+> Hint: `dnf install`, then `rpm -q` and `rpm -qc`.
 
 **Task 5.** Determine which package owns `/etc/chrony.conf`.
 
+> Hint: follow-along step 5; `rpm -qf` for an existing file.
+
 **Task 6.** List every file the `chrony` package installed.
+
+> Hint: `rpm -ql`; use `dnf repoquery -l` if not installed.
 
 **Task 7.** Search for packages related to `nfs`, then show detailed information about `nfs-utils` without installing it.
 
+> Hint: `dnf search` then `dnf info`.
+
 **Task 8.** Install a package group that provides development tools.
+
+> Hint: `dnf group list`, then `group install` or `@development`.
 
 **Task 9.** Show the ten most recently installed packages on this system.
 
+> Hint: `rpm -qa --last | head`.
+
 **Task 10.** Determine whether any file belonging to the `httpd` package has been modified since installation.
+
+> Hint: follow-along step 11; `rpm -V`.
 
 **Task 11.** Show the dnf transaction history and reverse the most recent transaction.
 
+> Hint: `dnf history`, then `dnf history undo N`.
+
 **Task 12.** Install a package from a local `.rpm` file, resolving its dependencies from configured repositories.
+
+> Hint: `dnf download` then `dnf install ./file.rpm` — the `./` prefix matters.
 
 **Task 13.** Temporarily disable all repositories except `local-baseos` for a single install command.
 
+> Hint: `--disablerepo="*" --enablerepo="local-baseos"`.
+
 **Task 14.** Update all packages on the system, then check whether any updates remain.
+
+> Hint: `dnf update`, then `dnf check-update` and check exit code.
 
 **Task 15.** Remove the `httpd` package along with any dependencies that are no longer needed.
 
+> Hint: `dnf remove` then `dnf autoremove`.
+
 **Task 16.** A repository you added returns "Failed to download metadata". List the things you would check, in order.
 
+> Hint: solution walks through `baseurl`, `repodata/repomd.xml`, mount, cache, GPG key, network.
+
 **Task 17.** Determine the exact version and release of the running kernel package, and list all installed kernels.
+
+> Hint: `uname -r` versus `rpm -q kernel` and `rpm -qa kernel*`.
 
 ---
 
@@ -769,6 +711,283 @@ rpm -q tree
 ```
 
 That last install is the real test. A repository that lists correctly but cannot install anything is not done.
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### dnf versus rpm
+
+| | **dnf** | **rpm** |
+| --- | --- | --- |
+| Resolves dependencies | **Yes** | **No** |
+| Downloads from repositories | Yes | No |
+| Use for | **Installing, updating, removing, searching** | **Querying what is installed** |
+| Install a local file | `dnf install ./pkg.rpm` (resolves deps) | `rpm -ivh pkg.rpm` (fails on missing deps) |
+
+**Rule: install with `dnf`, query with `rpm`.** `dnf install ./local.rpm` is better than `rpm -ivh local.rpm` because it pulls in dependencies from your repos.
+
+`yum` is a symlink to `dnf` on RHEL 8+, so every `yum` command still works.
+
+### dnf: the commands
+
+```bash
+sudo dnf install httpd
+sudo dnf install -y httpd vim tar          # several at once
+sudo dnf install ./local-package.rpm       # a local file, WITH dependency resolution
+sudo dnf install https://host/pkg.rpm      # straight from a URL
+
+sudo dnf remove httpd
+sudo dnf autoremove                        # drop orphaned dependencies
+
+sudo dnf update                            # everything
+sudo dnf update httpd                      # one package
+sudo dnf upgrade                           # a synonym for update
+sudo dnf check-update                      # what is available, without installing
+sudo dnf downgrade httpd                   # go back a version
+sudo dnf reinstall httpd
+
+dnf search httpd                           # search names and summaries
+dnf search all "web server"                # search descriptions too
+dnf info httpd                             # details about a package
+dnf list installed                         # everything installed
+dnf list installed | grep httpd
+dnf list available
+dnf list httpd                             # installed and available versions
+
+dnf provides /etc/httpd/conf/httpd.conf    # WHICH PACKAGE PROVIDES THIS FILE
+dnf provides */semanage                    # find the package for a command
+dnf repoquery -l httpd                     # files in a package, without installing it
+dnf deplist httpd                          # dependencies
+
+dnf history                                # transaction history
+dnf history info 5                         # details of transaction 5
+sudo dnf history undo 5                    # REVERSE transaction 5
+sudo dnf history redo 5
+sudo dnf history rollback 5
+
+sudo dnf clean all                         # clear the metadata cache
+sudo dnf makecache                         # rebuild it
+dnf repolist                               # enabled repositories
+dnf repolist --all                         # including disabled
+dnf repoinfo                               # detailed repository information
+```
+
+**`dnf provides` is the one that saves you.** When you know you need `semanage` but not which package supplies it:
+
+```bash
+dnf provides */semanage
+# policycoreutils-python-utils-3.6-2.el9.x86_64 : SELinux policy core python utilities
+```
+
+Memorise that `semanage` comes from **`policycoreutils-python-utils`**. Without it, every SELinux port and fcontext task is impossible, and it is not always installed.
+
+### Package groups
+
+```bash
+dnf group list
+dnf group list --available
+dnf group info "Development Tools"
+sudo dnf group install "Development Tools"
+sudo dnf group install @development         # the @ shorthand
+sudo dnf group remove "Development Tools"
+dnf group list --installed
+```
+
+`dnf install @groupname` and `dnf group install "Group Name"` are equivalent. Quote names containing spaces.
+
+### Modules and application streams
+
+RHEL 8 introduced modules for shipping multiple versions of the same software. RHEL 9 and 10 use them much less, but recognise the commands:
+
+```bash
+dnf module list
+dnf module list nodejs
+dnf module info nodejs:18
+sudo dnf module install nodejs:18
+sudo dnf module enable nodejs:18
+sudo dnf module disable nodejs
+sudo dnf module reset nodejs
+sudo dnf module switch-to nodejs:20
+```
+
+`reset` returns a module to no enabled stream, which you need before switching versions.
+
+### rpm: querying
+
+```bash
+rpm -qa                             # all installed packages
+rpm -qa | grep httpd
+rpm -q httpd                        # is this package installed, and which version
+rpm -qi httpd                       # detailed info
+rpm -ql httpd                       # LIST all files
+rpm -qc httpd                       # CONFIG files only
+rpm -qd httpd                       # DOCUMENTATION files only
+rpm -qf /etc/httpd/conf/httpd.conf  # which package owns this FILE
+rpm -q --changelog httpd | head
+rpm -q --scripts httpd              # install/uninstall scripts
+rpm -V httpd                        # VERIFY: what has changed since installation
+rpm -Va                             # verify everything (slow)
+rpm -qa --last | head               # most recently installed
+
+# Query a FILE that is not installed
+rpm -qip package.rpm
+rpm -qlp package.rpm
+
+# Install / upgrade / erase (prefer dnf for these)
+sudo rpm -ivh package.rpm           # install, verbose, hash progress
+sudo rpm -Uvh package.rpm           # upgrade or install
+sudo rpm -Fvh package.rpm           # freshen: upgrade only if already installed
+sudo rpm -e httpd                   # erase
+sudo rpm -ivh --nodeps package.rpm  # skip dependency checks. Avoid
+```
+
+**The four query flags to know cold: `-qa` all, `-qf` which package owns a file, `-ql` list files, `-qc` config files.**
+
+`rpm -V` output decodes as:
+
+```text
+S.5....T.  c /etc/httpd/conf/httpd.conf
+│ │    │   │
+│ │    │   └─ c = a config file
+│ │    └───── T = timestamp differs
+│ └────────── 5 = MD5 checksum differs (CONTENTS CHANGED)
+└──────────── S = size differs
+```
+
+Other codes: `M` mode, `U` owner, `G` group, `L` symlink path, `D` device. A `5` on a config file is expected if you edited it; a `5` on a binary is a red flag.
+
+### Repository files
+
+Repositories are defined in `/etc/yum.repos.d/*.repo`.
+
+```bash
+ls /etc/yum.repos.d/
+cat /etc/yum.repos.d/*.repo | head -20
+```
+
+The format:
+
+```text
+[repo-id]                     <- unique, no spaces, used on the command line
+name=Human Readable Name      <- REQUIRED
+baseurl=https://host/path/    <- REQUIRED (or mirrorlist/metalink)
+enabled=1                     <- 1 or 0
+gpgcheck=1                    <- verify package signatures
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+```
+
+Valid `baseurl` schemes:
+
+```text
+baseurl=https://repo.example.com/rhel9/BaseOS/
+baseurl=http://repo.example.com/rhel9/AppStream/
+baseurl=ftp://repo.example.com/rhel9/
+baseurl=file:///mnt/iso/BaseOS            <- THREE slashes: file:// + /mnt
+```
+
+**`file:///` needs three slashes**: two from the scheme and one starting the absolute path. `file://mnt/iso` is wrong and produces a confusing error.
+
+Creating a repo file by hand:
+
+```bash
+sudo tee /etc/yum.repos.d/local.repo <<'EOF'
+[local-baseos]
+name=Local BaseOS
+baseurl=file:///mnt/iso/BaseOS
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+
+[local-appstream]
+name=Local AppStream
+baseurl=file:///mnt/iso/AppStream
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+EOF
+
+sudo dnf clean all
+sudo dnf repolist
+```
+
+**Use a quoted heredoc (`<<'EOF'`)** so that `$releasever` and `$basearch`, if present, are written literally rather than expanded by your shell. This is a real and confusing failure mode.
+
+### dnf config-manager
+
+The tool-based alternative to hand-editing.
+
+```bash
+sudo dnf install -y dnf-plugins-core       # provides config-manager
+
+sudo dnf config-manager --add-repo https://repo.example.com/rhel9/
+sudo dnf config-manager --set-enabled repo-id
+sudo dnf config-manager --set-disabled repo-id
+dnf config-manager --dump                  # all settings
+```
+
+On newer dnf the syntax is `dnf config-manager addrepo --from-repofile=...`. If `--add-repo` complains, hand-writing the `.repo` file is always available and always works. **When in doubt, write the file.**
+
+Temporarily using or ignoring a repo without changing config:
+
+```bash
+sudo dnf --disablerepo=* --enablerepo=local-baseos install httpd
+sudo dnf --enablerepo=epel install something
+sudo dnf --nogpgcheck install ./unsigned.rpm
+```
+
+### GPG keys
+
+```bash
+ls /etc/pki/rpm-gpg/
+rpm -qa gpg-pubkey*                                     # imported keys
+rpm -qi gpg-pubkey-fd431d51-4ae0493b                    # details of one
+sudo rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+sudo rpm --import https://host/RPM-GPG-KEY
+```
+
+If a repository has no key available and the task does not require signature checking, `gpgcheck=0` is acceptable. Prefer `gpgcheck=1` with a correct key when one exists.
+
+The key filename differs by distribution:
+
+```bash
+ls /etc/pki/rpm-gpg/
+# RHEL:      RPM-GPG-KEY-redhat-release
+# Rocky:     RPM-GPG-KEY-Rocky-9
+# AlmaLinux: RPM-GPG-KEY-AlmaLinux-9
+```
+
+### Mounting an ISO as a repository
+
+A very common exam and lab pattern.
+
+```bash
+sudo mkdir -p /mnt/iso
+sudo mount /dev/sr0 /mnt/iso                # or mount -o loop file.iso /mnt/iso
+ls /mnt/iso                                 # expect BaseOS and AppStream
+
+# Make the mount persistent
+echo '/dev/sr0  /mnt/iso  iso9660  ro,nofail  0 0' | sudo tee -a /etc/fstab
+sudo findmnt --verify
+sudo mount -a
+```
+
+**Use `nofail`.** Without it, booting without the ISO attached drops you into emergency mode. See `16-boot-interrupt-root-recovery.md`.
+
+### Subscription management (RHEL only)
+
+Not present on Rocky or AlmaLinux.
+
+```bash
+sudo subscription-manager register --username=user --password=pass
+sudo subscription-manager attach --auto
+sudo subscription-manager repos --list
+sudo subscription-manager repos --enable=rhel-9-for-x86_64-baseos-rpms
+sudo subscription-manager status
+sudo subscription-manager unregister
+```
+
+On the exam you will normally be given a local or classroom repository rather than a subscription, so know this exists but expect to configure a `.repo` file.
 
 ## Exam Tips
 

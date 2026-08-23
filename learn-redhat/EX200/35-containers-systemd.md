@@ -4,66 +4,143 @@
 
 **This is the objective the containers domain exists for.** Podman has no daemon, so `podman run -d` is the equivalent of `systemctl start` without `enable` — the container is gone after a reboot. A systemd unit is what makes it persistent, and persistence is what is graded.
 
-## Concept Refresher
+## Before You Start
 
-### Why a unit is required
+You need a running lab VM with Podman installed. If you have not built one yet, do `Lab-Setup.md` first. Complete `34-podman-images-running.md` before this file — you need a working container, port publishing, and bind mounts with `:Z`.
 
 ```bash
-podman run -d --name web -p 8080:8080 <image>
-curl http://localhost:8080                     # works
-sudo reboot
-podman ps                                      # EMPTY
-curl http://localhost:8080                     # connection refused
+vagrant ssh server1    # or ssh into your practice VM
+sudo dnf install -y container-tools
 ```
 
-**Podman is not a daemon.** A container is a child of the `podman` process that started it, and nothing brings it back at boot. systemd is the supervisor.
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+A container that works until you reboot feels like success. A container that starts after reboot without you touching it is what gets the marks.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. Prove that `podman run -d` does not survive a reboot
+
+```bash
+sudo podman pull registry.access.redhat.com/ubi9/httpd-24
+sudo podman run -d --name web -p 8080:8080 registry.access.redhat.com/ubi9/httpd-24
+sudo podman ps
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080
+```
+
+**You should see** the container running and HTTP status `200`.
+
+**Podman is not a daemon.** A container is a child of the `podman` process that started it. Nothing brings it back at boot:
 
 ```text
    podman run -d          ≈  systemctl start    (now, but not after a reboot)
    a systemd unit + enable ≈  systemctl enable  (after every reboot)
 ```
 
-### Two mechanisms
+If you reboot now, `sudo podman ps` will be empty and `curl` will fail — the container definition may remain in `Exited` state, but the process is gone. **`podman run --restart=always` does not help either** — there is nothing to honour it at boot.
 
-| | **`podman generate systemd`** | **Quadlet (`.container` files)** |
-| --- | --- | --- |
-| Available since | Podman 3 | **Podman 4.4+** |
-| Status | **Deprecated in Podman 5** | **The current approach** |
-| How it works | Generates a `.service` file from a container | systemd generator reads a `.container` file |
-| File written | `container-web.service` | `web.container` |
-| RHEL 9 | **Yes** | Yes (4.4+) |
-| RHEL 10 | Deprecated but present | **Yes, preferred** |
+### 2. Generate a rootful systemd unit with `--new`
 
-**Learn both.** `generate systemd` is what most study material and older exam objectives describe; Quadlet is what RHEL 10 prefers. A task will accept either as long as the container starts at boot.
-
-### Rootful units
+Pull and test the container by hand first, then generate the unit:
 
 ```bash
 sudo podman run -d --name web -p 8080:8080 registry.access.redhat.com/ubi9/httpd-24
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080
 
 cd /etc/systemd/system
 sudo podman generate systemd --new --name web --files
-sudo systemctl daemon-reload
-sudo podman rm -f web                          # remove the manual container
-sudo systemctl enable --now container-web
-systemctl status container-web
+sudo cat /etc/systemd/system/container-web.service
 ```
+
+**You should see** a unit file at `/etc/systemd/system/container-web.service` whose `ExecStart` is a full `podman run ...` command, not just `podman start web`.
 
 | Element | Detail |
 | --- | --- |
 | Unit directory | **`/etc/systemd/system/`** |
 | Unit name | **`container-<name>.service`** |
+| **`--new`** | **Creates a fresh container from the recorded command line each start** |
 | Enable | `sudo systemctl enable --now container-web` |
-| Runs as | root |
-| Starts at | **Boot** |
 
-**`--new` is important.** Without it the unit starts and stops the *existing* container; with it, the unit creates a fresh container each time from the recorded `podman run` command line. **`--new` is what you want** — it survives `podman rm` and is self-contained.
+**`--files` writes into the current directory.** `cd /etc/systemd/system` first, or redirect output explicitly.
 
-### Rootless units
+### 3. Hand the container to systemd
 
 ```bash
-podman run -d --name web -p 8080:8080 registry.access.redhat.com/ubi9/httpd-24
+sudo systemctl daemon-reload
+sudo podman rm -f web
+sudo systemctl enable --now container-web
+systemctl status container-web
+systemctl is-enabled container-web
+systemctl is-active container-web
+sudo podman ps
+curl http://localhost:8080
+```
 
+**You should see** `enabled`, `active`, the container running, and a successful curl.
+
+Three steps that cost marks if skipped: **`daemon-reload`**, **`enable`** (not just `start`), and removing the manual container so systemd owns it cleanly.
+
+```bash
+sudo firewall-cmd --permanent --add-port=8080/tcp
+sudo firewall-cmd --reload
+```
+
+### 4. Understand `--new` versus without `--new`
+
+Compare the generated `ExecStart` lines:
+
+```bash
+sudo podman run -d --name web1 -p 8081:8080 registry.access.redhat.com/ubi9/httpd-24
+cd /etc/systemd/system
+sudo podman generate systemd --name web1 --files
+sudo grep ExecStart container-web1.service
+```
+
+**You should see** `ExecStart=/usr/bin/podman start web1` — it requires the container to already exist.
+
+```bash
+sudo podman run -d --name web2 -p 8082:8080 registry.access.redhat.com/ubi9/httpd-24
+sudo podman generate systemd --new --name web2 --files
+sudo grep ExecStart container-web2.service
+```
+
+**You should see** a full `podman run ...` line. Remove both containers and try starting:
+
+```bash
+sudo systemctl daemon-reload
+sudo podman rm -f web1 web2
+sudo systemctl start container-web1    # fails — no container named web1
+sudo systemctl start container-web2    # succeeds — recreates from scratch
+```
+
+**Always use `--new`.** The unit records the entire command — image, ports, volumes, environment — and survives `podman rm`.
+
+### 5. Create a rootless user unit
+
+Switch to a regular user (or create `alice`):
+
+```bash
+su - alice    # or work as your own user
+podman pull registry.access.redhat.com/ubi9/httpd-24
+mkdir -p ~/webcontent
+echo "<h1>Rootless service</h1>" > ~/webcontent/index.html
+
+podman run -d --name web -p 8080:8080 -v ~/webcontent:/var/www/html:Z \
+  registry.access.redhat.com/ubi9/httpd-24
+curl -s http://localhost:8080
+```
+
+Generate the user unit:
+
+```bash
 mkdir -p ~/.config/systemd/user
 cd ~/.config/systemd/user
 podman generate systemd --new --name web --files
@@ -71,42 +148,48 @@ systemctl --user daemon-reload
 podman rm -f web
 systemctl --user enable --now container-web
 systemctl --user status container-web
+```
 
-# THE STEP EVERYONE FORGETS
-loginctl enable-linger $(whoami)
+**You should see** the unit active while you are logged in.
+
+| | Rootful | **Rootless** |
+| --- | --- | --- |
+| Unit directory | `/etc/systemd/system/` | **`~/.config/systemd/user/`** |
+| Commands | `sudo systemctl` | **`systemctl --user`** |
+| Storage | `/var/lib/containers` | `~/.local/share/containers` |
+| Ports < 1024 | Allowed | **Refused** |
+
+**Use `su - alice`, not `sudo -u alice`,** for `systemctl --user` — the dash gives a login session with `XDG_RUNTIME_DIR`.
+
+### 6. Enable lingering — the step everyone forgets
+
+```bash
 loginctl show-user $(whoami) | grep -i linger
 ```
 
-| Element | Detail |
-| --- | --- |
-| Unit directory | **`~/.config/systemd/user/`** |
-| Commands | **`systemctl --user`** |
-| Enable | `systemctl --user enable --now container-web` |
-| **Required extra step** | **`loginctl enable-linger USER`** |
-
-**Without lingering, a rootless user unit stops when the user logs out and does not start at boot.** systemd tears down the user's session manager on logout. `enable-linger` keeps it alive:
+**You should see** `Linger=no` (unless already configured).
 
 ```bash
-loginctl enable-linger alice
-sudo loginctl enable-linger alice              # from another account
-loginctl show-user alice | grep -i linger
-ls /var/lib/systemd/linger/
+loginctl enable-linger $(whoami)    # or: sudo loginctl enable-linger alice
+loginctl show-user $(whoami) | grep -i linger
+ls -l /var/lib/systemd/linger/
 ```
 
-```text
-Linger=yes
-```
+**You should see** `Linger=yes` and a marker file in `/var/lib/systemd/linger/`.
 
-**`loginctl enable-linger` is the single most commonly missed step in this objective.** A rootless container unit without it appears to work perfectly and is dead after the reboot.
+**Without lingering, a rootless user unit stops when the user logs out and does not start at boot.** systemd tears down the user's session manager on logout. This is the single most commonly missed step in this objective.
 
-### Quadlet
+### 7. Configure a rootful Quadlet `.container` file
 
 ```bash
-# Rootful
-sudo mkdir -p /etc/containers/systemd
+sudo mkdir -p /etc/containers/systemd /srv/webcontent
+echo "<h1>Quadlet rootful container</h1>" | sudo tee /srv/webcontent/index.html
+sudo semanage fcontext -a -t container_file_t "/srv/webcontent(/.*)?"
+sudo restorecon -Rv /srv/webcontent
+
 sudo tee /etc/containers/systemd/web.container >/dev/null <<'EOF'
 [Unit]
-Description=httpd container
+Description=httpd container managed by Quadlet
 After=network-online.target
 Wants=network-online.target
 
@@ -126,147 +209,101 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl start web
 systemctl status web
+curl http://localhost:8080
 ```
 
+**You should see** `Loaded: ... ; generated` — the unit was produced from your `.container` file. **`web.container` becomes `web.service`.**
+
+| | `podman generate systemd` | **Quadlet** |
+| --- | --- | --- |
+| File | `/etc/systemd/system/container-web.service` | **`/etc/containers/systemd/web.container`** |
+| Service name | `container-web.service` | **`web.service`** |
+| `systemctl enable` | **Required** | **Not possible — use `WantedBy=`** |
+| Status in Podman 5 | Deprecated | **Preferred** |
+
+**`daemon-reload` after every edit.** There is no `systemctl enable` for Quadlet — `[Install] WantedBy=` does the enabling.
+
+### 8. Configure a rootless Quadlet file
+
 ```bash
-# Rootless
 mkdir -p ~/.config/containers/systemd
-vim ~/.config/containers/systemd/web.container
+tee ~/.config/containers/systemd/web.container >/dev/null <<'EOF'
+[Unit]
+Description=Rootless httpd container via Quadlet
+After=network-online.target
+
+[Container]
+Image=registry.access.redhat.com/ubi9/httpd-24
+ContainerName=web
+PublishPort=8080:8080
+Volume=%h/webcontent:/var/www/html:Z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
+EOF
+
 systemctl --user daemon-reload
 systemctl --user start web
-loginctl enable-linger $(whoami)
+systemctl --user status web
+systemctl --user cat web.service
 ```
 
-| | Rootful | Rootless |
-| --- | --- | --- |
-| Directory | **`/etc/containers/systemd/`** | **`~/.config/containers/systemd/`** |
-| Reload | `sudo systemctl daemon-reload` | `systemctl --user daemon-reload` |
-| Unit name | **`web.service`** from `web.container` | Same |
-| Lingering | Not needed | **Required** |
+**You should see** the generated unit in `/run/user/UID/systemd/generator/` with `SourcePath=` pointing at your `.container` file. **`%h` expands to the user's home directory.**
 
-**Quadlet units are generated at `daemon-reload`, not installed.** So:
+Rootless Quadlet still requires **`loginctl enable-linger USER`**.
 
-- **There is no `systemctl enable`.** `WantedBy=` in the `[Install]` section does the enabling when the unit is generated.
-- **`daemon-reload` after every edit**, or systemd does not see the change.
-- **The service name drops `.container`**: `web.container` becomes `web.service`.
+### 9. Add persistent storage, ports, and environment in one file
 
 ```bash
-systemctl cat web.service                      # see the generated unit
-/usr/lib/systemd/system-generators/podman-system-generator --dryrun
-```
+sudo mkdir -p /srv/dbdata
+sudo semanage fcontext -a -t container_file_t "/srv/dbdata(/.*)?"
+sudo restorecon -Rv /srv/dbdata
 
-Common `[Container]` keys:
+sudo tee /etc/containers/systemd/db.container >/dev/null <<'EOF'
+[Unit]
+Description=MariaDB container
+After=network-online.target
 
-| Key | Equivalent |
-| --- | --- |
-| **`Image=`** | The image |
-| **`ContainerName=`** | `--name` |
-| **`PublishPort=8080:8080`** | `-p` |
-| **`Volume=/host:/ctr:Z`** | `-v` |
-| **`Environment=KEY=value`** | `-e` |
-| `EnvironmentFile=` | `--env-file` |
-| `Exec=` | The command to run |
-| `User=`, `Group=` | `-u` |
-| `Network=` | `--network` |
-| `AutoUpdate=registry` | `--label io.containers.autoupdate` |
+[Container]
+Image=registry.redhat.io/rhel9/mariadb-105
+ContainerName=db
+PublishPort=3306:3306
+Volume=/srv/dbdata:/var/lib/mysql/data:Z
+Environment=MYSQL_ROOT_PASSWORD=redhat123
+Environment=MYSQL_DATABASE=appdb
+Environment=MYSQL_USER=appuser
+Environment=MYSQL_PASSWORD=apppass
 
-### The complete rootful workflow
+[Service]
+Restart=always
+TimeoutStartSec=300
 
-```bash
-# 1. Pull as root — rootful storage
-sudo podman pull registry.access.redhat.com/ubi9/httpd-24
+[Install]
+WantedBy=multi-user.target default.target
+EOF
 
-# 2. Prepare persistent storage
-sudo mkdir -p /srv/webcontent
-echo "<h1>Container as a service</h1>" | sudo tee /srv/webcontent/index.html
-sudo semanage fcontext -a -t container_file_t "/srv/webcontent(/.*)?"
-sudo restorecon -Rv /srv/webcontent
-
-# 3. Test the container by hand first
-sudo podman run -d --name web -p 8080:8080 \
-  -v /srv/webcontent:/var/www/html:Z \
-  registry.access.redhat.com/ubi9/httpd-24
-curl http://localhost:8080
-
-# 4. Generate the unit
-cd /etc/systemd/system
-sudo podman generate systemd --new --name web --files
 sudo systemctl daemon-reload
-
-# 5. Remove the manual container and let systemd own it
-sudo podman rm -f web
-sudo systemctl enable --now container-web
-systemctl status container-web
-sudo podman ps
-
-# 6. Firewall
-sudo firewall-cmd --permanent --add-port=8080/tcp
-sudo firewall-cmd --reload
-
-# 7. Verify
-curl http://localhost:8080
-systemctl is-enabled container-web
-sudo reboot
+sudo systemctl start db
+sudo podman exec db env | grep -i mysql
+sudo podman exec db mysql -uroot -predhat123 -e 'SHOW DATABASES;'
 ```
 
-### The complete rootless workflow
+**You should see** the environment variables and `appdb` in the database list. **Data in `/srv/dbdata` survives container recreation** — without the volume, `Restart=always` would lose the database every restart.
 
-```bash
-# As the user
-podman pull registry.access.redhat.com/ubi9/httpd-24
-mkdir -p ~/webcontent
-echo "<h1>Rootless container service</h1>" > ~/webcontent/index.html
+| Requirement | Quadlet key | `podman run` flag |
+| --- | --- | --- |
+| Persistent storage | **`Volume=/host:/ctr:Z`** | `-v /host:/ctr:Z` |
+| Published port | **`PublishPort=3306:3306`** | `-p 3306:3306` |
+| Environment | **`Environment=KEY=value`** | `-e KEY=value` |
 
-podman run -d --name web -p 8080:8080 -v ~/webcontent:/var/www/html:Z \
-  registry.access.redhat.com/ubi9/httpd-24
-curl http://localhost:8080
+Keep secrets in an `EnvironmentFile=` with `chmod 600`, not in a world-readable unit.
 
-mkdir -p ~/.config/systemd/user
-cd ~/.config/systemd/user
-podman generate systemd --new --name web --files
-systemctl --user daemon-reload
+### 10. Set a restart policy
 
-podman rm -f web
-systemctl --user enable --now container-web
-systemctl --user status container-web
-
-# CRITICAL
-loginctl enable-linger $(whoami)
-loginctl show-user $(whoami) | grep -i linger
-
-sudo firewall-cmd --permanent --add-port=8080/tcp
-sudo firewall-cmd --reload
-```
-
-### Verification checklist
-
-```bash
-# Rootful
-systemctl is-enabled container-web
-systemctl is-active container-web
-sudo podman ps
-curl http://localhost:8080
-
-# Rootless
-systemctl --user is-enabled container-web
-systemctl --user is-active container-web
-loginctl show-user $(whoami) | grep -i linger
-podman ps
-curl http://localhost:8080
-
-# Quadlet
-systemctl status web.service
-systemctl cat web.service
-```
-
-**And the only test that matters:**
-
-```bash
-sudo reboot
-# then check the container is running WITHOUT starting it by hand
-```
-
-### Restart policy
+For Quadlet, edit `[Service]`:
 
 ```text
 [Service]
@@ -274,58 +311,179 @@ Restart=always
 RestartSec=5
 ```
 
-| Value | Behaviour |
-| --- | --- |
-| `no` | Never restart |
-| `on-failure` | Restart on a non-zero exit |
-| **`always`** | **Always restart** |
-| `on-abnormal` | On a signal or timeout |
-
-**`podman generate systemd --new` writes `Restart=on-failure` by default**, which is usually fine. `--restart-policy=always` changes it:
+For `podman generate systemd`:
 
 ```bash
 sudo podman generate systemd --new --restart-policy=always --name web --files
 ```
 
-**Do not use `podman run --restart=always` as a substitute for a unit** — without a daemon there is nothing to honour it at boot.
+Or override with `systemctl edit container-web`:
 
-## Tasks
+```ini
+[Service]
+Restart=always
+RestartSec=5
+```
+
+Test by killing the container:
+
+```bash
+sudo podman kill web
+sleep 8
+sudo podman ps
+systemctl status web
+```
+
+**You should see** systemd restart the container. **`podman run --restart=always` is not a substitute** — there is no daemon to honour it at boot.
+
+| `Restart=` | Restarts after |
+| --- | --- |
+| `on-failure` | Non-zero exit, signal, or timeout — **`generate systemd` default** |
+| **`always`** | **Any exit — use for services that must always run** |
+
+### 11. Manage through systemd, not podman
+
+Once systemd owns a container:
+
+| Intent | **Correct** | Wrong |
+| --- | --- | --- |
+| Stop | **`systemctl stop web`** | `podman stop web` |
+| Start | **`systemctl start web`** | `podman start web` |
+| Restart | **`systemctl restart web`** | `podman restart web` |
+| Status | **`systemctl status web`** | `podman ps` alone |
+
+**`podman stop` under `Restart=always` triggers an immediate restart.** Under `Restart=no`, it leaves the unit marked `failed`. **Inspect with podman; control with systemctl.**
+
+```bash
+sudo systemctl stop web
+sudo podman ps                    # gone
+sudo systemctl start web
+sudo podman ps                    # back
+```
+
+### 12. Read logs two ways — and verify persistence
+
+```bash
+sudo journalctl -u web -n 20
+sudo journalctl -xeu web
+sudo podman logs web
+```
+
+| | **`journalctl -u web`** | **`podman logs web`** |
+| --- | --- | --- |
+| Shows | **systemd events AND container output** | **Only container stdout/stderr** |
+| Survives `podman rm` | **Yes** | No |
+| Best for | **"It will not start"** | **"It started but misbehaves"** |
+
+**The only test that matters:**
+
+```bash
+systemctl is-enabled container-web    # or check WantedBy= for Quadlet
+loginctl show-user alice | grep -i linger    # rootless only
+sudo firewall-cmd --permanent --list-ports
+sudo reboot
+# after reboot, without starting anything by hand:
+systemctl status container-web
+sudo podman ps
+curl http://localhost:8080
+```
+
+**You should see** the container running and responding without manual intervention.
+
+### Mini checkpoint
+
+Before the practice tasks, you should be able to explain:
+
+| Concept | Key detail |
+| --- | --- |
+| Why a unit is needed | Podman has no daemon; nothing restarts containers at boot |
+| Rootful unit path | `/etc/systemd/system/container-NAME.service` |
+| Rootless unit path | `~/.config/systemd/user/container-NAME.service` |
+| **`--new`** | Unit records full `podman run`; survives `podman rm` |
+| **`loginctl enable-linger`** | Required for rootless services to start at boot |
+| Quadlet path | `/etc/containers/systemd/NAME.container` → `NAME.service` |
+| Quadlet enable | **`[Install] WantedBy=`** — no `systemctl enable` |
+| After any unit change | **`daemon-reload`** |
+
+If any row is blank in your head, re-run the step above that covers it.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Demonstrate that a container started with `podman run -d` does not survive a reboot.
 
+> Hint: follow-along step 1 — pull, run, curl, reboot, check `podman ps`.
+
 **Task 2.** Create a rootful systemd unit for a container so it starts automatically at boot, using `podman generate systemd`.
+
+> Hint: steps 2–3 — `cd /etc/systemd/system`, `--new --files`, `daemon-reload`, `enable --now`.
 
 **Task 3.** Verify the rootful container service survives a reboot.
 
+> Hint: check `is-enabled` before reboot; after reboot do not start anything by hand.
+
 **Task 4.** Explain the difference between `podman generate systemd` with and without `--new`, and show why `--new` is preferred.
+
+> Hint: compare `ExecStart` lines; remove containers and try `systemctl start`.
 
 **Task 5.** Create a rootless systemd unit for a container run by the user `alice`, so it starts at boot.
 
+> Hint: step 5 — `~/.config/systemd/user/`, `systemctl --user`, pull as alice.
+
 **Task 6.** Explain and configure the one additional step a rootless container service requires, and prove it is necessary.
+
+> Hint: step 6 — `loginctl enable-linger`; show `Linger=no` then terminate-user.
 
 **Task 7.** Verify the rootless container service survives a reboot and a logout.
 
+> Hint: reboot without logging in as alice; `terminate-user` and curl still works with lingering.
+
 **Task 8.** Configure the same container using a Quadlet `.container` file, rootful.
+
+> Hint: step 7 — `/etc/containers/systemd/`, `[Container]`, `[Install] WantedBy=`.
 
 **Task 9.** Configure a Quadlet container rootless, and show where the generated unit comes from.
 
+> Hint: step 8 — `~/.config/containers/systemd/`, `systemctl --user cat web.service`.
+
 **Task 10.** Create a container service with persistent storage, a published port, and environment variables, all defined in the unit.
+
+> Hint: step 9 — `Volume=`, `PublishPort=`, `Environment=` in a `.container` file or `--new` ExecStart.
 
 **Task 11.** Configure a container service with a restart policy so it recovers from a crash.
 
+> Hint: step 10 — `Restart=always`; test with `podman kill`.
+
 **Task 12.** Stop, start, and check the status of a container service, and show why `podman stop` is the wrong tool once systemd owns it.
+
+> Hint: step 11 — `systemctl stop/start`; then `podman stop` under `Restart=always`.
 
 **Task 13.** Read the logs of a container service two different ways.
 
+> Hint: step 12 — `journalctl -u` versus `podman logs`.
+
 **Task 14.** Diagnose: `systemctl status container-web` reports the unit failed at boot.
+
+> Hint: `journalctl -xeu`; copy `ExecStart` and run by hand; check image store, port, volume path, SELinux.
 
 **Task 15.** Diagnose: a rootless container service works, but after a reboot the container is not running.
 
+> Hint: `Linger=no` is the usual cause; `is-enabled` alone is not sufficient.
+
 **Task 16.** Diagnose: a Quadlet unit does not appear in `systemctl` at all.
+
+> Hint: wrong directory, wrong extension, no `daemon-reload`, or syntax error — use `--dryrun` generator.
 
 **Task 17.** Remove a container service completely.
 
+> Hint: `disable --now`, delete unit file, `daemon-reload`, `podman rm`, optionally `disable-linger`.
+
 **Task 18.** Verify every container service configuration survives a reboot.
+
+> Hint: pre-reboot checklist — `is-enabled`, `Linger=yes`, `WantedBy=`, firewall `--permanent`, image in matching store.
 
 ---
 
@@ -2138,6 +2296,97 @@ sudo firewall-cmd --permanent --list-ports
 ```
 
 **Then reboot and verify without touching anything by hand.** That is exactly what the grader does.
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### Two mechanisms
+
+| | **`podman generate systemd`** | **Quadlet (`.container` files)** |
+| --- | --- | --- |
+| Available since | Podman 3 | **Podman 4.4+** |
+| Status | **Deprecated in Podman 5** | **The current approach** |
+| File written | `container-web.service` | `web.container` |
+| RHEL 10 | Deprecated but present | **Yes, preferred** |
+
+**Learn both.** A task will accept either as long as the container starts at boot.
+
+### Rootful workflow
+
+```bash
+sudo podman pull registry.access.redhat.com/ubi9/httpd-24
+sudo podman run -d --name web -p 8080:8080 -v /srv/webcontent:/var/www/html:Z <image>
+cd /etc/systemd/system
+sudo podman generate systemd --new --name web --files
+sudo systemctl daemon-reload
+sudo podman rm -f web
+sudo systemctl enable --now container-web
+sudo firewall-cmd --permanent --add-port=8080/tcp && sudo firewall-cmd --reload
+```
+
+### Rootless workflow
+
+```bash
+podman pull registry.access.redhat.com/ubi9/httpd-24
+podman run -d --name web -p 8080:8080 -v ~/webcontent:/var/www/html:Z <image>
+mkdir -p ~/.config/systemd/user && cd ~/.config/systemd/user
+podman generate systemd --new --name web --files
+systemctl --user daemon-reload
+podman rm -f web
+systemctl --user enable --now container-web
+loginctl enable-linger $(whoami)    # or: sudo loginctl enable-linger USER
+```
+
+### Quadlet template
+
+```ini
+[Unit]
+Description=httpd container
+After=network-online.target
+
+[Container]
+Image=registry.access.redhat.com/ubi9/httpd-24
+ContainerName=web
+PublishPort=8080:8080
+Volume=/srv/webcontent:/var/www/html:Z
+Environment=KEY=value
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target
+```
+
+| Key | Equivalent |
+| --- | --- |
+| **`Image=`** | The image |
+| **`ContainerName=`** | `--name` |
+| **`PublishPort=8080:8080`** | `-p` |
+| **`Volume=/host:/ctr:Z`** | `-v` |
+| **`Environment=KEY=value`** | `-e` |
+| `EnvironmentFile=` | `--env-file` |
+
+### Unit locations
+
+| | Rootful | Rootless |
+| --- | --- | --- |
+| `generate systemd` | `/etc/systemd/system/` | `~/.config/systemd/user/` |
+| Quadlet | `/etc/containers/systemd/` | `~/.config/containers/systemd/` |
+| Commands | `sudo systemctl` | `systemctl --user` |
+| Lingering | Not needed | **`loginctl enable-linger USER`** |
+
+### Verification checklist
+
+```bash
+systemctl is-enabled container-web          # rootful
+systemctl --user is-enabled container-web   # rootless
+loginctl show-user USER | grep -i linger    # rootless
+sudo podman ps
+curl http://localhost:8080
+sudo reboot    # then verify without starting anything by hand
+```
 
 ## Exam Tips
 

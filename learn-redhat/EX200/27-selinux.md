@@ -12,555 +12,250 @@
 
 **Never disable SELinux to make a task pass.** It is graded, and disabling it fails other tasks too.
 
-## Concept Refresher
+## Before You Start
 
-### What SELinux adds
-
-Standard permissions ask "does this *user* have access to this file?" SELinux asks "does this *process*, in its security context, have permission to perform this *action* on this object, in its security context?"
-
-```text
-   process wants to open a file
-             │
-   ┌─────────▼──────────────────────────┐
-   │  1. Standard permissions (DAC)     │   ugo/rwx, ACLs
-   │     Denied?  ──► EACCES            │
-   └─────────┬──────────────────────────┘
-             │ allowed
-   ┌─────────▼──────────────────────────┐
-   │  2. SELinux policy (MAC)           │   context vs context
-   │     Denied?  ──► EACCES + AVC log  │
-   └─────────┬──────────────────────────┘
-             │ allowed
-        ┌────▼─────┐
-        │  access  │
-        └──────────┘
-```
-
-**Both must allow.** So `chmod 777` does not defeat SELinux, and a correct SELinux context does not defeat a missing execute bit. When troubleshooting, check both — see `12-special-permissions-acls.md` for the DAC side.
-
-### Contexts
-
-Every process and every file has a context, written as four colon-separated fields:
-
-```text
-    system_u : object_r : httpd_sys_content_t : s0
-       │          │              │              │
-      user       role          TYPE           level
-                                │
-                    ◄── this is the one that matters ──►
-```
-
-| Field | Purpose | RHCSA relevance |
-| --- | --- | --- |
-| user | SELinux user, e.g. `system_u`, `unconfined_u` | Rarely |
-| role | `object_r` for files, `system_r` for processes | Rarely |
-| **type** | **The label that policy rules act on** | **This is 95% of the exam** |
-| level | MLS/MCS sensitivity, `s0` | Only for containers |
-
-**Type Enforcement is the mechanism you are being tested on.** A rule says "a process of type `httpd_t` may read a file of type `httpd_sys_content_t`". If the file is labelled `user_home_t` instead, the read is denied.
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
-ls -Z /var/www/html/index.html
-ps -eZ | grep httpd
-id -Z
-ls -Zd /var/www/html
-netstat -Z 2>/dev/null || ss -Z
+vagrant ssh server1    # or ssh into your practice VM
 ```
 
-```text
-$ ls -Z /var/www/html/index.html
-unconfined_u:object_r:httpd_sys_content_t:s0 /var/www/html/index.html
+**How to use this file:**
 
-$ ps -eZ | grep httpd
-system_u:system_r:httpd_t:s0     1234 ?  00:00:00 httpd
-```
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
 
-**`-Z` is the universal SELinux flag**: `ls -Z`, `ps -Z`, `id -Z`, `cp -Z`, `mkdir -Z`, `ss -Z`, `netstat -Z`.
+---
 
-### Modes
+## Follow Along
 
-| Mode | Enforces policy | Logs denials |
-| --- | --- | --- |
-| **`enforcing`** | **Yes** | Yes |
-| **`permissive`** | No | **Yes** |
-| `disabled` | No | No |
+Work on **server1** with SELinux **enforcing**. After each step, compare your output to **You should see**.
+
+### 1. Report current mode and boot mode
 
 ```bash
-getenforce                       # current mode
-sestatus                         # full status
-sestatus -v                      # plus context of key files/processes
-sudo setenforce 0                # Permissive — RUNTIME ONLY
-sudo setenforce 1                # Enforcing — RUNTIME ONLY
-```
-
-```text
-$ sestatus
-SELinux status:                 enabled
-SELinuxfs mount:                /sys/fs/selinux
-SELinux root directory:         /etc/selinux
-Loaded policy name:             targeted
-Current mode:                   enforcing
-Mode from config file:          enforcing
-Policy MLS status:              enabled
-Policy deny_unknown status:     allowed
-Memory protection checking:     actual (secure)
-Max kernel policy version:      33
-```
-
-**Two lines to read: `Current mode` and `Mode from config file`. If they differ, someone used `setenforce` and the setting will revert on reboot.**
-
-**`setenforce` does not persist.** The persistent setting is in `/etc/selinux/config`:
-
-```bash
-sudo vim /etc/selinux/config
-```
-
-```ini
-SELINUX=enforcing
-SELINUXTYPE=targeted
-```
-
-```bash
+getenforce
+sestatus | grep -i mode
 grep '^SELINUX=' /etc/selinux/config
 ```
 
-Or non-interactively:
+**You should see** `Enforcing` (or `Permissive`) from `getenforce`, and **matching** values for `Current mode` and `Mode from config file` in `sestatus`.
 
-```bash
-sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
-grep '^SELINUX=' /etc/selinux/config
-```
-
-**Permissive mode is a diagnostic tool, not a solution.** Set permissive, reproduce the problem, collect the AVC denials, then go back to enforcing and fix the labels properly. A task that says "SELinux must be in enforcing mode" is checking `getenforce` **and** the config file after a reboot.
-
-### Going from disabled to enforcing
-
-You cannot simply flip the config from `disabled` to `enforcing` and reboot — the whole filesystem is unlabelled and the system will not boot properly. You must relabel:
-
-```bash
-sudo sed -i 's/^SELINUX=.*/SELINUX=permissive/' /etc/selinux/config
-sudo touch /.autorelabel
-sudo reboot
-# the system relabels everything and reboots again — this takes a while
-# then, once it is up and you have confirmed no denials:
-sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
-sudo reboot
-```
-
-**Going `disabled` → `permissive` → relabel → `enforcing` is the safe route.** Jumping straight to `enforcing` on an unlabelled filesystem can leave you with an unbootable machine — a spectacular way to fail an exam.
-
-### Changing file contexts
-
-Two commands, and choosing the wrong one costs marks:
-
-```bash
-# TEMPORARY: changes the label now, LOST on relabel
-sudo chcon -t httpd_sys_content_t /web/index.html
-sudo chcon -R -t httpd_sys_content_t /web
-sudo chcon --reference=/var/www/html /web        # copy context from elsewhere
-
-# PERMANENT: adds a policy rule, then apply it
-sudo semanage fcontext -a -t httpd_sys_content_t "/web(/.*)?"
-sudo restorecon -Rv /web
-```
-
-| | `chcon` | `semanage fcontext` + `restorecon` |
-| --- | --- | --- |
-| Effect | **Changes the label directly** | **Adds a rule to the policy database** |
-| Immediate | Yes | Only after `restorecon` |
-| Survives `restorecon` | **No** | **Yes** |
-| Survives `touch /.autorelabel` | **No** | **Yes** |
-| Survives a reboot | Yes, usually | **Yes** |
-| Exam answer | **Almost never** | **Almost always** |
-
-**`chcon` is graffiti; `semanage fcontext` changes the map.** A `chcon` label survives an ordinary reboot but is wiped by any relabel — and, more importantly, it is the wrong answer to "ensure the correct context is set permanently". **Use `semanage fcontext -a` followed by `restorecon`.**
-
-The regular expression matters:
-
-```bash
-sudo semanage fcontext -a -t httpd_sys_content_t "/web(/.*)?"
-```
-
-| Pattern | Matches |
-| --- | --- |
-| `"/web(/.*)?"` | **`/web` itself and everything beneath it.** The standard idiom |
-| `"/web/.*"` | Contents only, not the directory itself |
-| `"/web"` | Only the directory itself |
-| `"/web(/.*)?\.html"` | Only `.html` files under `/web` |
-
-**`"(/.*)?"` is the pattern to memorise.** Quote it, or the shell expands the glob characters.
-
-Managing the rules:
-
-```bash
-sudo semanage fcontext -l                        # all rules (long)
-sudo semanage fcontext -l -C                     # only LOCAL customisations
-sudo semanage fcontext -l | grep '^/web'
-sudo semanage fcontext -m -t httpd_sys_content_t "/web(/.*)?"    # modify existing
-sudo semanage fcontext -d "/web(/.*)?"           # delete the rule
-sudo restorecon -Rv /web                         # then reapply
-```
-
-**`semanage fcontext -l -C` shows only your local additions**, which is the fast way to verify your own work against the thousands of default rules.
-
-### restorecon
-
-```bash
-sudo restorecon -v /path/to/file          # verbose
-sudo restorecon -Rv /path                 # recursive
-sudo restorecon -RFv /path                # -F forces even user/role changes
-sudo restorecon -Rvn /path                # -n = dry run, change nothing
-```
-
-```text
-$ sudo restorecon -Rv /web
-Relabeled /web from unconfined_u:object_r:default_t:s0 to unconfined_u:object_r:httpd_sys_content_t:s0
-Relabeled /web/index.html from unconfined_u:object_r:default_t:s0 to unconfined_u:object_r:httpd_sys_content_t:s0
-```
-
-**`restorecon` sets the label the policy says it should be** — it does not guess and it does not take a type argument. So `restorecon` alone fixes a *wrong* label on a *standard* path, but for a non-standard path you must first tell the policy what the label should be with `semanage fcontext -a`.
-
-The whole filesystem:
-
-```bash
-sudo restorecon -Rv /                     # long
-sudo touch /.autorelabel && sudo reboot   # relabel during boot
-sudo fixfiles relabel
-sudo fixfiles -R httpd restore            # only files owned by a package
-```
-
-**`restorecon -Rvn` is the safest diagnostic in the toolkit** — it reports every mislabelled file without changing anything:
-
-```bash
-sudo restorecon -Rvn /var/www/           # what WOULD change?
-```
-
-Empty output means every label matches the policy.
-
-### Why labels go wrong
-
-| Action | Resulting label | Why |
-| --- | --- | --- |
-| `cp file /var/www/html/` | **Inherits the destination's type** | New file created in the directory |
-| `cp -a file /var/www/html/` | **Keeps the source label** | `-a` preserves context |
-| `mv file /var/www/html/` | **Keeps the original label** | The inode is not recreated |
-| `tar xf` | Inherits from the directory | Unless `--selinux --xattrs` |
-| `tar --selinux -xf` | Restores the archived labels | |
-| Creating a new directory | Inherits from the parent | |
-| `useradd` | Correct by policy | |
-
-**`mv` preserving the old label is the number one cause of SELinux failures on this exam.** You move a file from your home directory to `/var/www/html`, it arrives labelled `user_home_t`, and httpd cannot read it:
-
-```bash
-mv ~/index.html /var/www/html/
-ls -Z /var/www/html/index.html
-# unconfined_u:object_r:user_home_t:s0
-sudo restorecon -v /var/www/html/index.html
-# Relabeled ... to httpd_sys_content_t
-```
-
-**Rule: after `mv`, `tar x`, or `cp -a` into a service directory, always `restorecon`.** The habit costs nothing.
-
-### Booleans
-
-Booleans toggle optional parts of the policy without writing rules.
-
-```bash
-getsebool -a                                     # every boolean
-getsebool -a | grep httpd
-getsebool httpd_enable_homedirs
-semanage boolean -l                              # with descriptions
-semanage boolean -l -C                           # only ones you changed
-```
-
-```text
-$ semanage boolean -l | grep httpd_enable_homedirs
-httpd_enable_homedirs   (off  ,  off)  Allow httpd to enable homedirs
-```
-
-The two values in parentheses are **(current, permanent)**. If they differ, someone set the boolean without `-P`.
-
-```bash
-sudo setsebool httpd_enable_homedirs on          # RUNTIME ONLY
-sudo setsebool -P httpd_enable_homedirs on       # PERMANENT
-```
-
-**`-P` is the `--permanent` of SELinux.** Without it the boolean reverts at the next reboot. `-P` takes a few seconds because it rebuilds the policy — that pause is how you know it worked.
-
-Booleans worth recognising:
-
-| Boolean | Enables |
-| --- | --- |
-| `httpd_enable_homedirs` | httpd serving `~/public_html` |
-| `httpd_can_network_connect` | httpd making outbound connections (proxying) |
-| `httpd_can_network_connect_db` | httpd connecting to a remote database |
-| `httpd_use_nfs` | httpd serving content from an NFS mount |
-| `httpd_anon_write` | httpd writing to `public_content_rw_t` |
-| `ftpd_full_access` | vsftpd full filesystem access |
-| `ftp_home_dir` | FTP access to home directories |
-| `nfs_export_all_rw` | Exporting any directory read-write over NFS |
-| `samba_enable_home_dirs` | Samba sharing home directories |
-| `ssh_sysadm_login` | ssh login to the sysadm role |
-| `use_nfs_home_dirs` | Home directories on NFS |
-| `selinuxuser_execmod` | Certain memory operations |
-
-**Find the right boolean by keyword rather than memorising the list:**
-
-```bash
-getsebool -a | grep -i nfs
-semanage boolean -l | grep -i home
-semanage boolean -l | grep -i httpd | grep -i network
-```
-
-And `sealert` output usually names the boolean for you.
-
-### Port labels
-
-SELinux labels network ports too, which is why moving a service to a non-standard port fails.
-
-```bash
-semanage port -l                                 # everything
-semanage port -l | grep http
-semanage port -l -C                              # only local changes
-semanage port -l | grep 8080
-```
-
-```text
-$ semanage port -l | grep '^http_port_t'
-http_port_t     tcp   80, 81, 443, 488, 8008, 8009, 8443, 9000
-```
-
-```bash
-sudo semanage port -a -t http_port_t -p tcp 8090      # ADD a new port
-sudo semanage port -m -t http_port_t -p tcp 8090      # MODIFY an existing entry
-sudo semanage port -d -t http_port_t -p tcp 8090      # DELETE
-```
-
-**`-a` adds, `-m` modifies, `-d` deletes.** If `-a` fails with "port already defined", the port is already labelled with some other type and you need `-m`:
-
-```bash
-$ sudo semanage port -a -t http_port_t -p tcp 82
-ValueError: Port tcp/82 already defined
-$ semanage port -l | grep '\b82\b'
-$ sudo semanage port -m -t http_port_t -p tcp 82
-```
-
-The classic sequence for moving sshd to port 2222:
-
-```bash
-sudo semanage port -a -t ssh_port_t -p tcp 2222
-sudo firewall-cmd --permanent --add-port=2222/tcp
-sudo firewall-cmd --reload
-sudo sed -i 's/^#\?Port .*/Port 2222/' /etc/ssh/sshd_config
-sudo systemctl restart sshd
-ss -tlnp | grep 2222
-```
-
-**Three things are needed for a non-standard port: the service configuration, the SELinux port label, and the firewall rule.** Miss any one and it fails. This is a favourite exam construction because it tests three objectives in one task.
-
-**Port labels persist automatically** — `semanage` writes to the policy store, and there is no `-P` flag needed.
-
-### Reading AVC denials
-
-An AVC (Access Vector Cache) denial is SELinux's log entry for a blocked action.
-
-```bash
-sudo ausearch -m AVC -ts recent
-sudo ausearch -m AVC,USER_AVC -ts today
-sudo ausearch -m AVC -ts recent -i              # -i interprets numbers into names
-sudo journalctl -t setroubleshoot
-sudo grep -i denied /var/log/audit/audit.log | tail
-sudo journalctl -b | grep -i avc
-```
-
-```text
-type=AVC msg=audit(1692364800.123:456): avc:  denied  { read } for
-  pid=1234 comm="httpd" name="index.html" dev="dm-0" ino=12345
-  scontext=system_u:system_r:httpd_t:s0
-  tcontext=unconfined_u:object_r:default_t:s0
-  tclass=file permissive=0
-```
-
-Read it in this order:
-
-| Field | Value here | Meaning |
-| --- | --- | --- |
-| `denied { read }` | read | **The action that was blocked** |
-| `comm=` | httpd | **Which program** |
-| `name=` | index.html | **Which object** |
-| **`scontext=`** | `httpd_t` | **The source type — the process** |
-| **`tcontext=`** | **`default_t`** | **The target type — the file** |
-| `tclass=` | file | The kind of object |
-| `permissive=0` | 0 | 0 = it was blocked; 1 = permissive, logged only |
-
-**`tcontext=...:default_t` immediately tells you the file has the wrong label** — httpd content should be `httpd_sys_content_t`. That is the whole diagnosis, from one line.
-
-The friendlier tool:
-
-```bash
-sudo dnf install -y setroubleshoot-server
-sudo sealert -a /var/log/audit/audit.log
-sudo journalctl -t setroubleshoot --since today
-```
-
-```text
-SELinux is preventing /usr/sbin/httpd from read access on the file index.html.
-
-*****  Plugin restorecon (99.5 confidence) suggests   ************************
-If you want to fix the label.
-/var/www/html/index.html default label should be httpd_sys_content_t.
-Then you can run restorecon. The access attempt may have been stopped due to
-insufficient permissions to access a parent directory.
-Do
-# /sbin/restorecon -v /var/www/html/index.html
-```
-
-**`sealert` names the fix and gives you the command.** Install `setroubleshoot-server` in your lab and check whether it is present on the exam — if it is, it turns SELinux troubleshooting into reading a paragraph.
-
-The audit service must be running for any of this to work:
-
-```bash
-systemctl status auditd
-```
-
-### The troubleshooting decision tree
-
-```text
-   Service is running but does not work
-              │
-   ┌──────────▼─────────────────────────────────────┐
-   │ Are there AVC denials?                         │
-   │   sudo ausearch -m AVC -ts recent              │
-   └──────────┬─────────────────────────────────────┘
-              │
-       ┌──────┴───────┐
-       │ no           │ yes
-       ▼              ▼
-  Not SELinux.   Read tcontext / scontext
-  Check the      and what was denied
-  firewall,             │
-  the service    ┌──────┴─────────────────────────┐
-  config,        │                                │
-  and DAC        ▼                                ▼
-  permissions   Wrong FILE label?          Wrong PORT label?
-                 │                                │
-                 ▼                                ▼
-        semanage fcontext -a          semanage port -a -t X -p tcp N
-        restorecon -Rv                        │
-                 │                            │
-                 └─────────┬──────────────────┘
-                           │
-                    still denied?
-                           │
-                           ▼
-                 Is there a BOOLEAN for it?
-                   semanage boolean -l | grep <keyword>
-                   setsebool -P <boolean> on
-                           │
-                    still denied?
-                           │
-                           ▼
-                 Generate a policy module
-                   ausearch -m AVC -ts recent | audit2allow -M mymod
-                   semodule -i mymod.pp
-```
-
-**Confirm SELinux is even the culprit before spending time on it:**
+### 2. Switch mode at runtime only
 
 ```bash
 sudo setenforce 0
-# retry the operation
-```
-
-If it now works, SELinux was the cause. **Then put it straight back:**
-
-```bash
+getenforce
+grep '^SELINUX=' /etc/selinux/config
 sudo setenforce 1
+getenforce
 ```
 
-Never leave it permissive as your answer.
+**You should see** `Permissive` while runtime is changed, but **`SELINUX=enforcing` unchanged in the config file**. `setenforce` does not persist.
 
-### audit2allow
-
-The last resort, for when no boolean and no label fixes the denial:
+### 3. Set enforcing mode persistently
 
 ```bash
-sudo ausearch -m AVC -ts recent | audit2allow           # show the rules
-sudo ausearch -m AVC -ts recent | audit2allow -w        # explain in words
-sudo ausearch -m AVC -ts recent | audit2allow -M mypol  # build a module
-sudo semodule -i mypol.pp                               # install it
-semodule -l | grep mypol
-sudo semodule -r mypol                                  # remove it
+sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+grep '^SELINUX=' /etc/selinux/config
+sudo setenforce 1
+sestatus | grep -i mode
 ```
 
-**Use `audit2allow` only after ruling out a label or boolean fix.** It is a legitimate tool but it grants whatever was attempted, including things you did not intend, and on the exam a correct label or boolean is nearly always the expected answer. Read `audit2allow -w` output before installing anything.
+**You should see** both mode lines read `enforcing`. **Set the config and use `setenforce` for immediate effect.**
 
-### Everything that persists, and how
+### 4. View contexts on files and processes
 
-| Setting | Non-persistent | **Persistent** |
+```bash
+ls -Zd /var/www/html
+ps -eZ | grep httpd
+id -Z
+```
+
+**You should see** `httpd_sys_content_t` on the web directory (if httpd is installed), `httpd_t` on httpd processes, and `unconfined_t` on your shell. **`-Z` is the universal SELinux flag.**
+
+### 5. Fix a non-standard web directory permanently
+
+```bash
+sudo dnf install -y httpd policycoreutils-python-utils
+sudo mkdir -p /web
+echo "Served from /web" | sudo tee /web/index.html
+ls -Zd /web
+sudo semanage fcontext -a -t httpd_sys_content_t "/web(/.*)?"
+sudo restorecon -Rv /web
+ls -Zd /web
+```
+
+**You should see** `/web` change from `default_t` to `httpd_sys_content_t`. **The permanent pattern is `semanage fcontext -a` then `restorecon` — not `chcon`.**
+
+### 6. See why `mv` breaks labels
+
+```bash
+echo test > ~/mvtest.html
+ls -Z ~/mvtest.html
+sudo mv ~/mvtest.html /var/www/html/
+ls -Z /var/www/html/mvtest.html
+sudo restorecon -v /var/www/html/mvtest.html
+```
+
+**You should see** the file keep `user_home_t` after `mv`, then relabel to `httpd_sys_content_t` after `restorecon`. **`cp` into a directory inherits the destination type; `mv` keeps the old label.**
+
+### 7. Dry-run mislabelled files
+
+```bash
+sudo restorecon -Rvn /var/www/
+```
+
+**You should see** either nothing (all labels correct) or `Would relabel` lines. **`-n` makes no changes** — safe diagnostic.
+
+### 8. Set a boolean permanently
+
+```bash
+semanage boolean -l | grep httpd_enable_homedirs
+sudo setsebool -P httpd_enable_homedirs on
+getsebool httpd_enable_homedirs
+semanage boolean -l | grep httpd_enable_homedirs
+```
+
+**You should see** `(on , on)` in `semanage boolean -l`. **`-P` is SELinux's `--permanent`.** Verify with `semanage`, not `getsebool` alone.
+
+### 9. Label a non-standard port
+
+```bash
+semanage port -l | grep '^http_port_t'
+sudo semanage port -a -t http_port_t -p tcp 8090
+semanage port -l | grep '^http_port_t'
+```
+
+**You should see** `8090` added to `http_port_t`. **Non-standard port tasks need three fixes: service config, SELinux port label, and firewall.**
+
+### 10. List only your customisations
+
+```bash
+sudo semanage fcontext -l -C
+semanage port -l -C
+semanage boolean -l -C
+```
+
+**You should see** only local additions — your `/web` rule, port 8090, and any booleans you changed. **`-C` is the pre-reboot verification checklist.**
+
+### 11. Read an AVC denial
+
+```bash
+sudo ausearch -m AVC -ts recent | tail -20
+```
+
+**You should see** lines with `scontext=` (process type), `tcontext=` (object type), and `denied { ... }`. **`tcontext=...:default_t` on a file almost always means wrong label → `semanage fcontext` + `restorecon`.**
+
+### 12. Install troubleshooting tools
+
+```bash
+rpm -q policycoreutils-python-utils setroubleshoot-server
+sudo dnf install -y setroubleshoot-server 2>/dev/null
+sudo sealert -a /var/log/audit/audit.log 2>/dev/null | head -30
+```
+
+**You should see** human-readable suggestions if denials exist. **`semanage` lives in `policycoreutils-python-utils`** — install it if the command is missing.
+
+### Mini checkpoint
+
+| Setting | Non-persistent | Persistent |
 | --- | --- | --- |
-| Mode | `setenforce 0/1` | **`/etc/selinux/config`** |
-| File context | `chcon` | **`semanage fcontext -a` + `restorecon`** |
-| Boolean | `setsebool X on` | **`setsebool -P X on`** |
-| Port label | — | **`semanage port -a`** (always persistent) |
-| Policy module | — | **`semodule -i`** (always persistent) |
+| Mode | `setenforce` | `/etc/selinux/config` |
+| File context | `chcon` | `semanage fcontext` + `restorecon` |
+| Boolean | `setsebool` without `-P` | `setsebool -P` |
+| Port label | — | `semanage port -a` (always persistent) |
 
-**Three flags to memorise: `-P` for booleans, `semanage fcontext` instead of `chcon`, and `/etc/selinux/config` instead of `setenforce`.**
+Memorise the regex `"/path(/.*)?"` and quote it.
 
-### The packages you need
+---
 
-```bash
-sudo dnf install -y policycoreutils-python-utils setroubleshoot-server
-```
+## Practice Tasks
 
-**`semanage` lives in `policycoreutils-python-utils`** and is not always installed. If `semanage: command not found` appears mid-exam, this is the fix. Check in your lab so you recognise it instantly.
-
-```bash
-rpm -q policycoreutils policycoreutils-python-utils setroubleshoot-server
-rpm -qf $(which semanage)
-```
-
-## Tasks
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Report the current SELinux mode, the mode configured for the next boot, and the loaded policy name.
 
+> Hint: getenforce, sestatus — read Current mode, Mode from config file, and Loaded policy name.
+
 **Task 2.** Switch to permissive mode for the current session only, then back to enforcing. Confirm the config file was not altered.
+
+> Hint: setenforce 0 then 1; grep /etc/selinux/config to prove the file was untouched.
 
 **Task 3.** Configure SELinux to be enforcing after the next reboot, using a command rather than an interactive editor.
 
+> Hint: sed -i on /etc/selinux/config, then setenforce 1 for immediate effect.
+
 **Task 4.** Show the SELinux context of `/var/www/html`, of a running `httpd` process, and of your own shell.
+
+> Hint: ls -Z, ps -eZ, id -Z — the type field (third colon-separated field) matters most.
 
 **Task 5.** Install `httpd`, create `/web/index.html`, configure httpd to serve from `/web`, and make it work with SELinux enforcing. Use the permanent context method.
 
+> Hint: Point httpd at /web, open the firewall, then semanage fcontext -a and restorecon -Rv.
+
 **Task 6.** Demonstrate why `chcon` is the wrong answer for Task 5 by relabelling the filesystem and observing what happens.
+
+> Hint: Use chcon, then restorecon -Rv /web and watch chcon get undone — policy wins.
 
 **Task 7.** Create a file in your home directory and `mv` it into `/var/www/html`. Observe the label and correct it.
 
+> Hint: mv from home to /var/www/html; restorecon fixes standard paths without semanage.
+
 **Task 8.** Report which files under `/var/www` have labels that disagree with the policy, without changing anything.
+
+> Hint: restorecon -Rvn PATH — empty output means every label matches policy.
 
 **Task 9.** Enable httpd serving of user home directories persistently, and verify the runtime and permanent values agree.
 
+> Hint: setsebool -P; verify (on, on) with semanage boolean -l, not getsebool alone.
+
 **Task 10.** Find the boolean that allows httpd to make outbound network connections, enable it permanently, and confirm.
+
+> Hint: semanage boolean -l | grep -i network; httpd_can_network_connect is the general one.
 
 **Task 11.** Configure httpd to listen on TCP port 8090 with SELinux enforcing, addressing every layer that blocks it.
 
+> Hint: Edit Listen in httpd.conf, semanage port -a, firewall-cmd --permanent --add-port, restart.
+
 **Task 12.** List all locally added port labels and file context rules, distinguishing them from the defaults.
+
+> Hint: Three -C commands: semanage fcontext -l -C, port -l -C, boolean -l -C.
 
 **Task 13.** Move sshd to port 2222 with SELinux enforcing and the firewall active.
 
+> Hint: Order: semanage port and firewall BEFORE restarting sshd; keep old SSH session open.
+
 **Task 14.** An AVC denial has occurred. Find it, interpret every relevant field, and state the fix.
+
+> Hint: ausearch -m AVC; read scontext, tcontext, and the denied operation.
 
 **Task 15.** Use `sealert` to obtain a human-readable explanation and suggested remedy for a denial.
 
+> Hint: sealert -a /var/log/audit/audit.log after setroubleshoot-server is installed.
+
 **Task 16.** Diagnose this scenario methodically: `httpd` is active, `curl localhost` returns 403 Forbidden.
+
+> Hint: 403 checklist: ausearch, namei -l for DAC, ls -Z for labels, Require in httpd config.
 
 **Task 17.** A denial cannot be fixed by a label or a boolean. Generate and install a custom policy module, then remove it.
 
+> Hint: audit2allow is last resort; label or boolean fix is almost always the exam answer.
+
 **Task 18.** Relabel the entire filesystem on the next boot.
+
+> Hint: touch /.autorelabel then reboot; required after rd.break password reset too.
 
 **Task 19.** Safely move a system from SELinux disabled to enforcing.
 
+> Hint: disabled → permissive + /.autorelabel → verify → enforcing. Never jump straight to enforcing.
+
 **Task 20.** Verify every SELinux change you have made survives a reboot.
+
+> Hint: Pre-reboot: getenforce matches config, all -C outputs, restorecon -Rvn silent, reboot, ausearch -ts boot.
+
+---
 
 ---
 
@@ -1785,6 +1480,518 @@ getenforce; grep '^SELINUX=' /etc/selinux/config
 semanage boolean -l -C            # every entry must read (on, on)
 sudo semanage fcontext -l -C
 sudo restorecon -Rvn /path/you/changed    # must be silent
+```
+
+---
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### What SELinux adds
+
+Standard permissions ask "does this *user* have access to this file?" SELinux asks "does this *process*, in its security context, have permission to perform this *action* on this object, in its security context?"
+
+```text
+   process wants to open a file
+             │
+   ┌─────────▼──────────────────────────┐
+   │  1. Standard permissions (DAC)     │   ugo/rwx, ACLs
+   │     Denied?  ──► EACCES            │
+   └─────────┬──────────────────────────┘
+             │ allowed
+   ┌─────────▼──────────────────────────┐
+   │  2. SELinux policy (MAC)           │   context vs context
+   │     Denied?  ──► EACCES + AVC log  │
+   └─────────┬──────────────────────────┘
+             │ allowed
+        ┌────▼─────┐
+        │  access  │
+        └──────────┘
+```
+
+**Both must allow.** So `chmod 777` does not defeat SELinux, and a correct SELinux context does not defeat a missing execute bit. When troubleshooting, check both — see `12-special-permissions-acls.md` for the DAC side.
+
+### Contexts
+
+Every process and every file has a context, written as four colon-separated fields:
+
+```text
+    system_u : object_r : httpd_sys_content_t : s0
+       │          │              │              │
+      user       role          TYPE           level
+                                │
+                    ◄── this is the one that matters ──►
+```
+
+| Field | Purpose | RHCSA relevance |
+| --- | --- | --- |
+| user | SELinux user, e.g. `system_u`, `unconfined_u` | Rarely |
+| role | `object_r` for files, `system_r` for processes | Rarely |
+| **type** | **The label that policy rules act on** | **This is 95% of the exam** |
+| level | MLS/MCS sensitivity, `s0` | Only for containers |
+
+**Type Enforcement is the mechanism you are being tested on.** A rule says "a process of type `httpd_t` may read a file of type `httpd_sys_content_t`". If the file is labelled `user_home_t` instead, the read is denied.
+
+```bash
+ls -Z /var/www/html/index.html
+ps -eZ | grep httpd
+id -Z
+ls -Zd /var/www/html
+netstat -Z 2>/dev/null || ss -Z
+```
+
+```text
+$ ls -Z /var/www/html/index.html
+unconfined_u:object_r:httpd_sys_content_t:s0 /var/www/html/index.html
+
+$ ps -eZ | grep httpd
+system_u:system_r:httpd_t:s0     1234 ?  00:00:00 httpd
+```
+
+**`-Z` is the universal SELinux flag**: `ls -Z`, `ps -Z`, `id -Z`, `cp -Z`, `mkdir -Z`, `ss -Z`, `netstat -Z`.
+
+### Modes
+
+| Mode | Enforces policy | Logs denials |
+| --- | --- | --- |
+| **`enforcing`** | **Yes** | Yes |
+| **`permissive`** | No | **Yes** |
+| `disabled` | No | No |
+
+```bash
+getenforce                       # current mode
+sestatus                         # full status
+sestatus -v                      # plus context of key files/processes
+sudo setenforce 0                # Permissive — RUNTIME ONLY
+sudo setenforce 1                # Enforcing — RUNTIME ONLY
+```
+
+```text
+$ sestatus
+SELinux status:                 enabled
+SELinuxfs mount:                /sys/fs/selinux
+SELinux root directory:         /etc/selinux
+Loaded policy name:             targeted
+Current mode:                   enforcing
+Mode from config file:          enforcing
+Policy MLS status:              enabled
+Policy deny_unknown status:     allowed
+Memory protection checking:     actual (secure)
+Max kernel policy version:      33
+```
+
+**Two lines to read: `Current mode` and `Mode from config file`. If they differ, someone used `setenforce` and the setting will revert on reboot.**
+
+**`setenforce` does not persist.** The persistent setting is in `/etc/selinux/config`:
+
+```bash
+sudo vim /etc/selinux/config
+```
+
+```ini
+SELINUX=enforcing
+SELINUXTYPE=targeted
+```
+
+```bash
+grep '^SELINUX=' /etc/selinux/config
+```
+
+Or non-interactively:
+
+```bash
+sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+grep '^SELINUX=' /etc/selinux/config
+```
+
+**Permissive mode is a diagnostic tool, not a solution.** Set permissive, reproduce the problem, collect the AVC denials, then go back to enforcing and fix the labels properly. A task that says "SELinux must be in enforcing mode" is checking `getenforce` **and** the config file after a reboot.
+
+### Going from disabled to enforcing
+
+You cannot simply flip the config from `disabled` to `enforcing` and reboot — the whole filesystem is unlabelled and the system will not boot properly. You must relabel:
+
+```bash
+sudo sed -i 's/^SELINUX=.*/SELINUX=permissive/' /etc/selinux/config
+sudo touch /.autorelabel
+sudo reboot
+# the system relabels everything and reboots again — this takes a while
+# then, once it is up and you have confirmed no denials:
+sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+sudo reboot
+```
+
+**Going `disabled` → `permissive` → relabel → `enforcing` is the safe route.** Jumping straight to `enforcing` on an unlabelled filesystem can leave you with an unbootable machine — a spectacular way to fail an exam.
+
+### Changing file contexts
+
+Two commands, and choosing the wrong one costs marks:
+
+```bash
+# TEMPORARY: changes the label now, LOST on relabel
+sudo chcon -t httpd_sys_content_t /web/index.html
+sudo chcon -R -t httpd_sys_content_t /web
+sudo chcon --reference=/var/www/html /web        # copy context from elsewhere
+
+# PERMANENT: adds a policy rule, then apply it
+sudo semanage fcontext -a -t httpd_sys_content_t "/web(/.*)?"
+sudo restorecon -Rv /web
+```
+
+| | `chcon` | `semanage fcontext` + `restorecon` |
+| --- | --- | --- |
+| Effect | **Changes the label directly** | **Adds a rule to the policy database** |
+| Immediate | Yes | Only after `restorecon` |
+| Survives `restorecon` | **No** | **Yes** |
+| Survives `touch /.autorelabel` | **No** | **Yes** |
+| Survives a reboot | Yes, usually | **Yes** |
+| Exam answer | **Almost never** | **Almost always** |
+
+**`chcon` is graffiti; `semanage fcontext` changes the map.** A `chcon` label survives an ordinary reboot but is wiped by any relabel — and, more importantly, it is the wrong answer to "ensure the correct context is set permanently". **Use `semanage fcontext -a` followed by `restorecon`.**
+
+The regular expression matters:
+
+```bash
+sudo semanage fcontext -a -t httpd_sys_content_t "/web(/.*)?"
+```
+
+| Pattern | Matches |
+| --- | --- |
+| `"/web(/.*)?"` | **`/web` itself and everything beneath it.** The standard idiom |
+| `"/web/.*"` | Contents only, not the directory itself |
+| `"/web"` | Only the directory itself |
+| `"/web(/.*)?\.html"` | Only `.html` files under `/web` |
+
+**`"(/.*)?"` is the pattern to memorise.** Quote it, or the shell expands the glob characters.
+
+Managing the rules:
+
+```bash
+sudo semanage fcontext -l                        # all rules (long)
+sudo semanage fcontext -l -C                     # only LOCAL customisations
+sudo semanage fcontext -l | grep '^/web'
+sudo semanage fcontext -m -t httpd_sys_content_t "/web(/.*)?"    # modify existing
+sudo semanage fcontext -d "/web(/.*)?"           # delete the rule
+sudo restorecon -Rv /web                         # then reapply
+```
+
+**`semanage fcontext -l -C` shows only your local additions**, which is the fast way to verify your own work against the thousands of default rules.
+
+### restorecon
+
+```bash
+sudo restorecon -v /path/to/file          # verbose
+sudo restorecon -Rv /path                 # recursive
+sudo restorecon -RFv /path                # -F forces even user/role changes
+sudo restorecon -Rvn /path                # -n = dry run, change nothing
+```
+
+```text
+$ sudo restorecon -Rv /web
+Relabeled /web from unconfined_u:object_r:default_t:s0 to unconfined_u:object_r:httpd_sys_content_t:s0
+Relabeled /web/index.html from unconfined_u:object_r:default_t:s0 to unconfined_u:object_r:httpd_sys_content_t:s0
+```
+
+**`restorecon` sets the label the policy says it should be** — it does not guess and it does not take a type argument. So `restorecon` alone fixes a *wrong* label on a *standard* path, but for a non-standard path you must first tell the policy what the label should be with `semanage fcontext -a`.
+
+The whole filesystem:
+
+```bash
+sudo restorecon -Rv /                     # long
+sudo touch /.autorelabel && sudo reboot   # relabel during boot
+sudo fixfiles relabel
+sudo fixfiles -R httpd restore            # only files owned by a package
+```
+
+**`restorecon -Rvn` is the safest diagnostic in the toolkit** — it reports every mislabelled file without changing anything:
+
+```bash
+sudo restorecon -Rvn /var/www/           # what WOULD change?
+```
+
+Empty output means every label matches the policy.
+
+### Why labels go wrong
+
+| Action | Resulting label | Why |
+| --- | --- | --- |
+| `cp file /var/www/html/` | **Inherits the destination's type** | New file created in the directory |
+| `cp -a file /var/www/html/` | **Keeps the source label** | `-a` preserves context |
+| `mv file /var/www/html/` | **Keeps the original label** | The inode is not recreated |
+| `tar xf` | Inherits from the directory | Unless `--selinux --xattrs` |
+| `tar --selinux -xf` | Restores the archived labels | |
+| Creating a new directory | Inherits from the parent | |
+| `useradd` | Correct by policy | |
+
+**`mv` preserving the old label is the number one cause of SELinux failures on this exam.** You move a file from your home directory to `/var/www/html`, it arrives labelled `user_home_t`, and httpd cannot read it:
+
+```bash
+mv ~/index.html /var/www/html/
+ls -Z /var/www/html/index.html
+# unconfined_u:object_r:user_home_t:s0
+sudo restorecon -v /var/www/html/index.html
+# Relabeled ... to httpd_sys_content_t
+```
+
+**Rule: after `mv`, `tar x`, or `cp -a` into a service directory, always `restorecon`.** The habit costs nothing.
+
+### Booleans
+
+Booleans toggle optional parts of the policy without writing rules.
+
+```bash
+getsebool -a                                     # every boolean
+getsebool -a | grep httpd
+getsebool httpd_enable_homedirs
+semanage boolean -l                              # with descriptions
+semanage boolean -l -C                           # only ones you changed
+```
+
+```text
+$ semanage boolean -l | grep httpd_enable_homedirs
+httpd_enable_homedirs   (off  ,  off)  Allow httpd to enable homedirs
+```
+
+The two values in parentheses are **(current, permanent)**. If they differ, someone set the boolean without `-P`.
+
+```bash
+sudo setsebool httpd_enable_homedirs on          # RUNTIME ONLY
+sudo setsebool -P httpd_enable_homedirs on       # PERMANENT
+```
+
+**`-P` is the `--permanent` of SELinux.** Without it the boolean reverts at the next reboot. `-P` takes a few seconds because it rebuilds the policy — that pause is how you know it worked.
+
+Booleans worth recognising:
+
+| Boolean | Enables |
+| --- | --- |
+| `httpd_enable_homedirs` | httpd serving `~/public_html` |
+| `httpd_can_network_connect` | httpd making outbound connections (proxying) |
+| `httpd_can_network_connect_db` | httpd connecting to a remote database |
+| `httpd_use_nfs` | httpd serving content from an NFS mount |
+| `httpd_anon_write` | httpd writing to `public_content_rw_t` |
+| `ftpd_full_access` | vsftpd full filesystem access |
+| `ftp_home_dir` | FTP access to home directories |
+| `nfs_export_all_rw` | Exporting any directory read-write over NFS |
+| `samba_enable_home_dirs` | Samba sharing home directories |
+| `ssh_sysadm_login` | ssh login to the sysadm role |
+| `use_nfs_home_dirs` | Home directories on NFS |
+| `selinuxuser_execmod` | Certain memory operations |
+
+**Find the right boolean by keyword rather than memorising the list:**
+
+```bash
+getsebool -a | grep -i nfs
+semanage boolean -l | grep -i home
+semanage boolean -l | grep -i httpd | grep -i network
+```
+
+And `sealert` output usually names the boolean for you.
+
+### Port labels
+
+SELinux labels network ports too, which is why moving a service to a non-standard port fails.
+
+```bash
+semanage port -l                                 # everything
+semanage port -l | grep http
+semanage port -l -C                              # only local changes
+semanage port -l | grep 8080
+```
+
+```text
+$ semanage port -l | grep '^http_port_t'
+http_port_t     tcp   80, 81, 443, 488, 8008, 8009, 8443, 9000
+```
+
+```bash
+sudo semanage port -a -t http_port_t -p tcp 8090      # ADD a new port
+sudo semanage port -m -t http_port_t -p tcp 8090      # MODIFY an existing entry
+sudo semanage port -d -t http_port_t -p tcp 8090      # DELETE
+```
+
+**`-a` adds, `-m` modifies, `-d` deletes.** If `-a` fails with "port already defined", the port is already labelled with some other type and you need `-m`:
+
+```bash
+$ sudo semanage port -a -t http_port_t -p tcp 82
+ValueError: Port tcp/82 already defined
+$ semanage port -l | grep '\b82\b'
+$ sudo semanage port -m -t http_port_t -p tcp 82
+```
+
+The classic sequence for moving sshd to port 2222:
+
+```bash
+sudo semanage port -a -t ssh_port_t -p tcp 2222
+sudo firewall-cmd --permanent --add-port=2222/tcp
+sudo firewall-cmd --reload
+sudo sed -i 's/^#\?Port .*/Port 2222/' /etc/ssh/sshd_config
+sudo systemctl restart sshd
+ss -tlnp | grep 2222
+```
+
+**Three things are needed for a non-standard port: the service configuration, the SELinux port label, and the firewall rule.** Miss any one and it fails. This is a favourite exam construction because it tests three objectives in one task.
+
+**Port labels persist automatically** — `semanage` writes to the policy store, and there is no `-P` flag needed.
+
+### Reading AVC denials
+
+An AVC (Access Vector Cache) denial is SELinux's log entry for a blocked action.
+
+```bash
+sudo ausearch -m AVC -ts recent
+sudo ausearch -m AVC,USER_AVC -ts today
+sudo ausearch -m AVC -ts recent -i              # -i interprets numbers into names
+sudo journalctl -t setroubleshoot
+sudo grep -i denied /var/log/audit/audit.log | tail
+sudo journalctl -b | grep -i avc
+```
+
+```text
+type=AVC msg=audit(1692364800.123:456): avc:  denied  { read } for
+  pid=1234 comm="httpd" name="index.html" dev="dm-0" ino=12345
+  scontext=system_u:system_r:httpd_t:s0
+  tcontext=unconfined_u:object_r:default_t:s0
+  tclass=file permissive=0
+```
+
+Read it in this order:
+
+| Field | Value here | Meaning |
+| --- | --- | --- |
+| `denied { read }` | read | **The action that was blocked** |
+| `comm=` | httpd | **Which program** |
+| `name=` | index.html | **Which object** |
+| **`scontext=`** | `httpd_t` | **The source type — the process** |
+| **`tcontext=`** | **`default_t`** | **The target type — the file** |
+| `tclass=` | file | The kind of object |
+| `permissive=0` | 0 | 0 = it was blocked; 1 = permissive, logged only |
+
+**`tcontext=...:default_t` immediately tells you the file has the wrong label** — httpd content should be `httpd_sys_content_t`. That is the whole diagnosis, from one line.
+
+The friendlier tool:
+
+```bash
+sudo dnf install -y setroubleshoot-server
+sudo sealert -a /var/log/audit/audit.log
+sudo journalctl -t setroubleshoot --since today
+```
+
+```text
+SELinux is preventing /usr/sbin/httpd from read access on the file index.html.
+
+*****  Plugin restorecon (99.5 confidence) suggests   ************************
+If you want to fix the label.
+/var/www/html/index.html default label should be httpd_sys_content_t.
+Then you can run restorecon. The access attempt may have been stopped due to
+insufficient permissions to access a parent directory.
+Do
+# /sbin/restorecon -v /var/www/html/index.html
+```
+
+**`sealert` names the fix and gives you the command.** Install `setroubleshoot-server` in your lab and check whether it is present on the exam — if it is, it turns SELinux troubleshooting into reading a paragraph.
+
+The audit service must be running for any of this to work:
+
+```bash
+systemctl status auditd
+```
+
+### The troubleshooting decision tree
+
+```text
+   Service is running but does not work
+              │
+   ┌──────────▼─────────────────────────────────────┐
+   │ Are there AVC denials?                         │
+   │   sudo ausearch -m AVC -ts recent              │
+   └──────────┬─────────────────────────────────────┘
+              │
+       ┌──────┴───────┐
+       │ no           │ yes
+       ▼              ▼
+  Not SELinux.   Read tcontext / scontext
+  Check the      and what was denied
+  firewall,             │
+  the service    ┌──────┴─────────────────────────┐
+  config,        │                                │
+  and DAC        ▼                                ▼
+  permissions   Wrong FILE label?          Wrong PORT label?
+                 │                                │
+                 ▼                                ▼
+        semanage fcontext -a          semanage port -a -t X -p tcp N
+        restorecon -Rv                        │
+                 │                            │
+                 └─────────┬──────────────────┘
+                           │
+                    still denied?
+                           │
+                           ▼
+                 Is there a BOOLEAN for it?
+                   semanage boolean -l | grep <keyword>
+                   setsebool -P <boolean> on
+                           │
+                    still denied?
+                           │
+                           ▼
+                 Generate a policy module
+                   ausearch -m AVC -ts recent | audit2allow -M mymod
+                   semodule -i mymod.pp
+```
+
+**Confirm SELinux is even the culprit before spending time on it:**
+
+```bash
+sudo setenforce 0
+# retry the operation
+```
+
+If it now works, SELinux was the cause. **Then put it straight back:**
+
+```bash
+sudo setenforce 1
+```
+
+Never leave it permissive as your answer.
+
+### audit2allow
+
+The last resort, for when no boolean and no label fixes the denial:
+
+```bash
+sudo ausearch -m AVC -ts recent | audit2allow           # show the rules
+sudo ausearch -m AVC -ts recent | audit2allow -w        # explain in words
+sudo ausearch -m AVC -ts recent | audit2allow -M mypol  # build a module
+sudo semodule -i mypol.pp                               # install it
+semodule -l | grep mypol
+sudo semodule -r mypol                                  # remove it
+```
+
+**Use `audit2allow` only after ruling out a label or boolean fix.** It is a legitimate tool but it grants whatever was attempted, including things you did not intend, and on the exam a correct label or boolean is nearly always the expected answer. Read `audit2allow -w` output before installing anything.
+
+### Everything that persists, and how
+
+| Setting | Non-persistent | **Persistent** |
+| --- | --- | --- |
+| Mode | `setenforce 0/1` | **`/etc/selinux/config`** |
+| File context | `chcon` | **`semanage fcontext -a` + `restorecon`** |
+| Boolean | `setsebool X on` | **`setsebool -P X on`** |
+| Port label | — | **`semanage port -a`** (always persistent) |
+| Policy module | — | **`semodule -i`** (always persistent) |
+
+**Three flags to memorise: `-P` for booleans, `semanage fcontext` instead of `chcon`, and `/etc/selinux/config` instead of `setenforce`.**
+
+### The packages you need
+
+```bash
+sudo dnf install -y policycoreutils-python-utils setroubleshoot-server
+```
+
+**`semanage` lives in `policycoreutils-python-utils`** and is not always installed. If `semanage: command not found` appears mid-exam, this is the fix. Check in your lab so you recognise it instantly.
+
+```bash
+rpm -q policycoreutils policycoreutils-python-utils setroubleshoot-server
+rpm -qf $(which semanage)
 ```
 
 ## Exam Tips

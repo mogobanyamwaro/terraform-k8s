@@ -4,215 +4,252 @@
 
 **This is new in the RHEL 10 objectives** and is absent from every RHEL 9 study guide. If your exam is the RHEL 10 version, this is a domain your competitors will not have prepared for. It is also a short topic — perhaps twenty minutes of learning.
 
-## Concept Refresher
+## Before You Start
 
-### What Flatpak is, and why RHEL cares
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
-Flatpak distributes **sandboxed desktop applications** independently of the base operating system. An application ships with its own runtime and libraries, so it does not depend on the RPM versions RHEL provides.
+```bash
+vagrant ssh server1    # or ssh into your practice VM
+```
 
-| | **RPM / dnf** | **Flatpak** |
-| --- | --- | --- |
-| Scope | The whole OS: kernel, services, libraries | **Desktop applications only** |
-| Dependencies | Shared, resolved system-wide | **Bundled with the app, per-runtime** |
-| Isolation | None | **Sandboxed** |
-| Installed for | The system | The system **or a single user** |
-| Requires root | Yes | **No, for `--user` installs** |
-| Update mechanism | `dnf update` | `flatpak update` |
-| Repository term | repository | **remote** |
-| Package naming | `httpd` | **`org.gnome.Calculator`** (reverse DNS) |
+**How to use this file:**
 
-Two vocabulary points that matter for reading tasks: a Flatpak repository is called a **remote**, and applications are named in **reverse-DNS form** like `org.gnome.Calculator`.
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
 
-### Installing Flatpak itself
+Flatpak vocabulary is different from dnf — remote, not repository; Application ID, not package name. Learn the words by typing the commands.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. Install Flatpak
 
 ```bash
 sudo dnf install -y flatpak
 flatpak --version
+rpm -q flatpak
 ```
 
-### Managing remotes
+**You should see** a version string like `Flatpak 1.14.10` and the RPM name from `rpm -q`.
 
-```bash
-flatpak remotes                                   # list configured remotes
-flatpak remotes -d                                # with details
-flatpak remote-list                               # a synonym
+Flatpak itself is an RPM package. Everything else in this file uses the `flatpak` command.
 
-# Add a remote
-sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-
-# Add for the current user only, no root needed
-flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-
-# Add from a local file
-sudo flatpak remote-add myrepo /path/to/myrepo.flatpakrepo
-
-# Inspect, modify, remove
-flatpak remote-info flathub org.gnome.Calculator
-sudo flatpak remote-modify --disable flathub
-sudo flatpak remote-modify --enable flathub
-sudo flatpak remote-delete flathub
-sudo flatpak remote-ls flathub | head            # what the remote offers
-```
-
-**`--if-not-exists` makes the command idempotent**, so re-running it is safe. Use it always.
-
-The canonical remote is **Flathub**, at `https://dl.flathub.org/repo/flathub.flatpakrepo`. The older `https://flathub.org/repo/flathub.flatpakrepo` also works and redirects.
-
-Red Hat also ships its own remote on systems with a subscription:
+### 2. List configured remotes
 
 ```bash
 flatpak remotes
-# rhel  Red Hat Enterprise Linux  system
+flatpak remotes -d
 ```
 
-### System versus user installations
+**You should see** zero or more remotes. A fresh system may show `rhel` (system) or nothing at all — both are normal.
 
-This distinction is the thing most likely to catch you out.
+The `Options` column shows `system` or `user`. A Flatpak repository is called a **remote**.
 
-```bash
-# System-wide: needs root, available to every user
-sudo flatpak install flathub org.gnome.Calculator
-
-# Per-user: no root, only for you, stored in ~/.local/share/flatpak
-flatpak install --user flathub org.gnome.Calculator
-```
-
-| | System (`--system`, the default with sudo) | User (`--user`) |
-| --- | --- | --- |
-| Needs root | **Yes** | **No** |
-| Location | `/var/lib/flatpak/` | `~/.local/share/flatpak/` |
-| Available to | All users | Only that user |
-| Listed by | `flatpak list --system` | `flatpak list --user` |
-
-**A remote added with `--user` cannot be used for a system install, and vice versa.** If `flatpak install` reports the remote is not found, you almost certainly added it in the other scope. Check both:
+### 3. Separate system and user remotes
 
 ```bash
 flatpak remotes --system
 flatpak remotes --user
 ```
 
-### Installing and managing applications
+**You should see** two independent lists. System remotes need root; user remotes live in your home directory.
+
+**These scopes are completely separate.** A remote added with `--user` is invisible to `sudo flatpak install`, and vice versa.
+
+### 4. Add a remote system-wide
 
 ```bash
-flatpak search calculator                         # search remotes
-flatpak search gimp
+sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak remotes
+```
 
-sudo flatpak install flathub org.gnome.Calculator
+**You should see** `flathub` listed with `system` in Options.
+
+**Always use `--if-not-exists`.** Without it, re-running the command errors with "Remote flathub already exists".
+
+Without internet access this command fails — the exam expects local remotes instead. See Practice Task 9.
+
+### 5. Search for an application
+
+```bash
+flatpak search calculator
+```
+
+**You should see** a table with Application ID, version, and remotes. The ID looks like `org.gnome.Calculator`.
+
+**Install by Application ID, not friendly name.** `org.gnome.Calculator` works; `Calculator` does not.
+
+### 6. Install a Flatpak application
+
+```bash
 sudo flatpak install -y flathub org.gnome.Calculator
-flatpak install --user -y flathub org.gnome.Calculator
-sudo flatpak install flathub org.gnome.Calculator//stable    # a specific branch
-
-flatpak list                                      # everything installed
-flatpak list --app                                # applications only, not runtimes
-flatpak list --runtime                            # runtimes only
-flatpak list --columns=application,version,branch,installation
-
-flatpak info org.gnome.Calculator                 # details
-flatpak info -o org.gnome.Calculator              # the origin remote
-
-flatpak run org.gnome.Calculator                  # launch it
-flatpak run --command=sh org.gnome.Calculator      # a shell inside the sandbox
-
-sudo flatpak update                               # update everything
-sudo flatpak update org.gnome.Calculator          # one app
-flatpak update --user
-
-sudo flatpak uninstall org.gnome.Calculator
-sudo flatpak uninstall --delete-data org.gnome.Calculator   # also remove its data
-sudo flatpak uninstall --unused                   # remove orphaned runtimes
 ```
 
-**`flatpak list --app` is usually what you want.** Plain `flatpak list` includes every runtime and extension, which is a long and confusing list.
+**You should see** Flatpak download the app and its runtime. The first install pulls in a large platform runtime — this is normal.
 
-### Runtimes
-
-Applications depend on a shared runtime, which Flatpak installs automatically.
+Verify:
 
 ```bash
-flatpak list --runtime
-sudo flatpak install flathub org.gnome.Platform//45
-sudo flatpak uninstall --unused                   # clean up unreferenced runtimes
+flatpak list --app
+flatpak info org.gnome.Calculator
 ```
 
-`uninstall --unused` is the Flatpak equivalent of `dnf autoremove`.
+**You should see** `Installation: system` in the info output, and the app listed by ID.
 
-### Permissions and sandboxing
-
-Occasionally relevant, and it shows you understand what Flatpak is for.
+### 7. List only applications, not runtimes
 
 ```bash
-flatpak info --show-permissions org.gnome.Calculator
-flatpak override --user --filesystem=home org.gnome.Calculator
-sudo flatpak override --filesystem=/data org.gnome.Calculator
-flatpak override --show org.gnome.Calculator
-sudo flatpak override --reset org.gnome.Calculator
+flatpak list | wc -l
+flatpak list --app | wc -l
 ```
 
-An application can only see what its manifest and overrides permit. This is the difference from an RPM, where an installed binary has whatever access the invoking user has.
+**You should see** the unfiltered count is much larger. Plain `flatpak list` includes runtimes, locales, and extensions.
 
-### Where things live
+**`flatpak list --app` is almost always what you want.**
 
-```text
-/var/lib/flatpak/                    system installations
-      ├── app/
-      ├── runtime/
-      └── repo/
-~/.local/share/flatpak/              user installations
-/etc/flatpak/remotes.d/*.flatpakrepo system remote definitions
-~/.local/share/flatpak/repo/config   user remote configuration
-/var/tmp/flatpak-cache-*             download cache
-```
+### 8. Show origin and details
 
 ```bash
-ls /var/lib/flatpak/app/ 2>/dev/null
-ls ~/.local/share/flatpak/app/ 2>/dev/null
-ls /etc/flatpak/remotes.d/ 2>/dev/null
+flatpak info org.gnome.Calculator
+flatpak info -o org.gnome.Calculator
 ```
 
-Knowing that system remotes appear in `/etc/flatpak/remotes.d/` lets you verify a remote persistently, which matters for the reboot check.
+**You should see** full details from the first command, and just `flathub` (or your remote name) from `-o`.
 
-### A caveat about the exam environment
+`-o` prints only the origin remote — useful in scripts.
 
-**The exam provides no internet access.** So a task cannot realistically require you to install from Flathub over the network. What a task *can* require:
+### 9. Where installations live on disk
 
-- Adding a remote from a **local** `.flatpakrepo` file or a classroom HTTP server.
-- Installing from a locally provided remote.
-- Listing, updating, or removing already-installed Flatpaks.
-- Configuring a remote so it is enabled and present after a reboot.
+```bash
+sudo ls /var/lib/flatpak/app/ 2>/dev/null
+sudo ls /etc/flatpak/remotes.d/ 2>/dev/null
+```
 
-So practise the **command syntax** and the **system versus user distinction**, and do not assume you will have Flathub. Set up a local remote in your lab to practise against, as in Task 9 below.
+**You should see** application directories under `/var/lib/flatpak/app/` and `.flatpakrepo` files under `/etc/flatpak/remotes.d/`.
 
-## Tasks
+System remotes persist in `/etc/flatpak/remotes.d/`. No daemon to enable — everything is files on disk.
+
+### 10. Disable and re-enable a remote
+
+```bash
+sudo flatpak remote-modify --disable flathub
+flatpak remotes -d | grep -A5 flathub
+sudo flatpak remote-modify --enable flathub
+```
+
+**You should see** the remote still listed when disabled, but installs from it fail with "Remote is disabled".
+
+**`remote-modify --disable` is reversible; `remote-delete` is not.** A task saying "temporarily disable" means `--disable`.
+
+### 11. Update Flatpak applications
+
+```bash
+sudo flatpak update -y
+```
+
+**You should see** Flatpak check for updates to system-scoped apps and runtimes.
+
+**`sudo flatpak update` only updates system installations.** User installs need `flatpak update --user` without sudo.
+
+### 12. Uninstall and clean up runtimes
+
+```bash
+sudo flatpak uninstall -y --delete-data org.gnome.Calculator
+sudo flatpak uninstall -y --unused
+flatpak list --app
+```
+
+**You should see** the app gone from `--app` list. `--unused` removes orphaned runtimes, like `dnf autoremove`.
+
+**`--delete-data` also removes application data** in `~/.var/app/<app-id>/`.
+
+### Mini checkpoint
+
+Before the practice tasks, you should be able to explain:
+
+| Command | Does |
+| --- | --- |
+| `flatpak remote-add --if-not-exists` | Add a remote, safe to re-run |
+| `flatpak remotes --system` / `--user` | List remotes in each scope |
+| `flatpak search` | Find apps by keyword |
+| `flatpak install remote APP_ID` | Install by Application ID |
+| `flatpak list --app` | Installed apps only |
+| `flatpak info -o APP_ID` | Show origin remote |
+| `remote-modify --disable` | Temporarily disable a remote |
+| `flatpak uninstall --delete-data` | Remove app and its data |
+| `flatpak uninstall --unused` | Remove orphaned runtimes |
+
+If any row is blank in your head, re-run the step above that covers it.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Install Flatpak and confirm its version.
 
+> Hint: `dnf install flatpak`, then `flatpak --version`.
+
 **Task 2.** List all currently configured Flatpak remotes, distinguishing system remotes from user remotes.
+
+> Hint: `flatpak remotes --system` and `--user`; `-d` for details.
 
 **Task 3.** Add the Flathub remote system-wide in a way that is safe to re-run.
 
+> Hint: follow-along step 4; `--if-not-exists`.
+
 **Task 4.** Add the Flathub remote for your user only, without root, and show that the two scopes are separate.
+
+> Hint: `flatpak remote-add --user --if-not-exists`; compare `--system` and `--user` lists.
 
 **Task 5.** Search the configured remotes for a calculator application.
 
+> Hint: follow-along step 5; note the Application ID column.
+
 **Task 6.** Install `org.gnome.Calculator` system-wide and verify where it was installed.
+
+> Hint: `sudo flatpak install`; check `flatpak info` for `Installation: system` and `/var/lib/flatpak/app/`.
 
 **Task 7.** List only the installed Flatpak applications, excluding runtimes.
 
+> Hint: `--app` flag; compare line counts with plain `flatpak list`.
+
 **Task 8.** Show the origin remote and full details of an installed Flatpak application.
+
+> Hint: `flatpak info` and `flatpak info -o`.
 
 **Task 9.** Create a local Flatpak remote from a directory on this machine and add it, so you can practise without internet access.
 
+> Hint: `ostree` repo under `/srv/flatpak-repo`, `file:///` with three slashes, `--no-gpg-verify`.
+
 **Task 10.** Update all system Flatpak applications, then update only a single named application.
+
+> Hint: `sudo flatpak update -y` then `sudo flatpak update -y org.gnome.Calculator`.
 
 **Task 11.** Temporarily disable a remote without deleting it, then re-enable it.
 
+> Hint: `remote-modify --disable` then `--enable`.
+
 **Task 12.** Uninstall a Flatpak application including its user data, then remove any runtimes that are no longer needed.
+
+> Hint: `--delete-data` then `--unused`.
 
 **Task 13.** Determine which files on disk define the system Flatpak remotes, and confirm your remote will survive a reboot.
 
+> Hint: `/etc/flatpak/remotes.d/` and `/var/lib/flatpak/repo/config`.
+
 **Task 14.** Grant an installed Flatpak application access to `/data` on the host filesystem.
 
+> Hint: `flatpak override --filesystem=/data`.
+
 **Task 15.** Explain the practical difference between installing a package with `dnf` and installing an application with `flatpak`, and when each is appropriate.
+
+> Hint: solution table — OS/services versus sandboxed desktop apps.
 
 ---
 
@@ -663,6 +700,186 @@ flatpak remotes                 # remote still present
 flatpak list --app              # application still installed
 flatpak info <app-id>           # check the Installation: line says system
 ```
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### What Flatpak is, and why RHEL cares
+
+Flatpak distributes **sandboxed desktop applications** independently of the base operating system. An application ships with its own runtime and libraries, so it does not depend on the RPM versions RHEL provides.
+
+| | **RPM / dnf** | **Flatpak** |
+| --- | --- | --- |
+| Scope | The whole OS: kernel, services, libraries | **Desktop applications only** |
+| Dependencies | Shared, resolved system-wide | **Bundled with the app, per-runtime** |
+| Isolation | None | **Sandboxed** |
+| Installed for | The system | The system **or a single user** |
+| Requires root | Yes | **No, for `--user` installs** |
+| Update mechanism | `dnf update` | `flatpak update` |
+| Repository term | repository | **remote** |
+| Package naming | `httpd` | **`org.gnome.Calculator`** (reverse DNS) |
+
+Two vocabulary points that matter for reading tasks: a Flatpak repository is called a **remote**, and applications are named in **reverse-DNS form** like `org.gnome.Calculator`.
+
+### Installing Flatpak itself
+
+```bash
+sudo dnf install -y flatpak
+flatpak --version
+```
+
+### Managing remotes
+
+```bash
+flatpak remotes                                   # list configured remotes
+flatpak remotes -d                                # with details
+flatpak remote-list                               # a synonym
+
+# Add a remote
+sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+# Add for the current user only, no root needed
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+# Add from a local file
+sudo flatpak remote-add myrepo /path/to/myrepo.flatpakrepo
+
+# Inspect, modify, remove
+flatpak remote-info flathub org.gnome.Calculator
+sudo flatpak remote-modify --disable flathub
+sudo flatpak remote-modify --enable flathub
+sudo flatpak remote-delete flathub
+sudo flatpak remote-ls flathub | head            # what the remote offers
+```
+
+**`--if-not-exists` makes the command idempotent**, so re-running it is safe. Use it always.
+
+The canonical remote is **Flathub**, at `https://dl.flathub.org/repo/flathub.flatpakrepo`. The older `https://flathub.org/repo/flathub.flatpakrepo` also works and redirects.
+
+Red Hat also ships its own remote on systems with a subscription:
+
+```bash
+flatpak remotes
+# rhel  Red Hat Enterprise Linux  system
+```
+
+### System versus user installations
+
+This distinction is the thing most likely to catch you out.
+
+```bash
+# System-wide: needs root, available to every user
+sudo flatpak install flathub org.gnome.Calculator
+
+# Per-user: no root, only for you, stored in ~/.local/share/flatpak
+flatpak install --user flathub org.gnome.Calculator
+```
+
+| | System (`--system`, the default with sudo) | User (`--user`) |
+| --- | --- | --- |
+| Needs root | **Yes** | **No** |
+| Location | `/var/lib/flatpak/` | `~/.local/share/flatpak/` |
+| Available to | All users | Only that user |
+| Listed by | `flatpak list --system` | `flatpak list --user` |
+
+**A remote added with `--user` cannot be used for a system install, and vice versa.** If `flatpak install` reports the remote is not found, you almost certainly added it in the other scope. Check both:
+
+```bash
+flatpak remotes --system
+flatpak remotes --user
+```
+
+### Installing and managing applications
+
+```bash
+flatpak search calculator                         # search remotes
+flatpak search gimp
+
+sudo flatpak install flathub org.gnome.Calculator
+sudo flatpak install -y flathub org.gnome.Calculator
+flatpak install --user -y flathub org.gnome.Calculator
+sudo flatpak install flathub org.gnome.Calculator//stable    # a specific branch
+
+flatpak list                                      # everything installed
+flatpak list --app                                # applications only, not runtimes
+flatpak list --runtime                            # runtimes only
+flatpak list --columns=application,version,branch,installation
+
+flatpak info org.gnome.Calculator                 # details
+flatpak info -o org.gnome.Calculator              # the origin remote
+
+flatpak run org.gnome.Calculator                  # launch it
+flatpak run --command=sh org.gnome.Calculator      # a shell inside the sandbox
+
+sudo flatpak update                               # update everything
+sudo flatpak update org.gnome.Calculator          # one app
+flatpak update --user
+
+sudo flatpak uninstall org.gnome.Calculator
+sudo flatpak uninstall --delete-data org.gnome.Calculator   # also remove its data
+sudo flatpak uninstall --unused                   # remove orphaned runtimes
+```
+
+**`flatpak list --app` is usually what you want.** Plain `flatpak list` includes every runtime and extension, which is a long and confusing list.
+
+### Runtimes
+
+Applications depend on a shared runtime, which Flatpak installs automatically.
+
+```bash
+flatpak list --runtime
+sudo flatpak install flathub org.gnome.Platform//45
+sudo flatpak uninstall --unused                   # clean up unreferenced runtimes
+```
+
+`uninstall --unused` is the Flatpak equivalent of `dnf autoremove`.
+
+### Permissions and sandboxing
+
+Occasionally relevant, and it shows you understand what Flatpak is for.
+
+```bash
+flatpak info --show-permissions org.gnome.Calculator
+flatpak override --user --filesystem=home org.gnome.Calculator
+sudo flatpak override --filesystem=/data org.gnome.Calculator
+flatpak override --show org.gnome.Calculator
+sudo flatpak override --reset org.gnome.Calculator
+```
+
+An application can only see what its manifest and overrides permit. This is the difference from an RPM, where an installed binary has whatever access the invoking user has.
+
+### Where things live
+
+```text
+/var/lib/flatpak/                    system installations
+      ├── app/
+      ├── runtime/
+      └── repo/
+~/.local/share/flatpak/              user installations
+/etc/flatpak/remotes.d/*.flatpakrepo system remote definitions
+~/.local/share/flatpak/repo/config   user remote configuration
+/var/tmp/flatpak-cache-*             download cache
+```
+
+```bash
+ls /var/lib/flatpak/app/ 2>/dev/null
+ls ~/.local/share/flatpak/app/ 2>/dev/null
+ls /etc/flatpak/remotes.d/ 2>/dev/null
+```
+
+Knowing that system remotes appear in `/etc/flatpak/remotes.d/` lets you verify a remote persistently, which matters for the reboot check.
+
+### A caveat about the exam environment
+
+**The exam provides no internet access.** So a task cannot realistically require you to install from Flathub over the network. What a task *can* require:
+
+- Adding a remote from a **local** `.flatpakrepo` file or a classroom HTTP server.
+- Installing from a locally provided remote.
+- Listing, updating, or removing already-installed Flatpaks.
+- Configuring a remote so it is enabled and present after a reboot.
+
+So practise the **command syntax** and the **system versus user distinction**, and do not assume you will have Flathub. Set up a local remote in your lab to practise against, as in Task 9 below.
 
 ## Exam Tips
 

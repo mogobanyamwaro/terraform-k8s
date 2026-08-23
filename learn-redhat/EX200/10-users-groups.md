@@ -4,273 +4,301 @@
 
 Near-certain exam content, and mercifully mechanical once you know the flags.
 
-## Concept Refresher
+## Before You Start
 
-### The four files
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
-| File | Holds | Permissions |
-| --- | --- | --- |
-| **`/etc/passwd`** | Account definitions | `644`, world-readable |
-| **`/etc/shadow`** | Password hashes and aging | **`000`** — root-only |
-| **`/etc/group`** | Group definitions and secondary members | `644` |
-| `/etc/gshadow` | Group passwords, rarely used | `000` |
-
-### /etc/passwd format
-
-```text
-alice:x:1001:1001:Alice Smith:/home/alice:/bin/bash
-  │   │  │    │        │           │          │
-  │   │  │    │        │           │          └─ 7. login shell
-  │   │  │    │        │           └──────────── 6. home directory
-  │   │  │    │        └──────────────────────── 5. GECOS / comment
-  │   │  │    └───────────────────────────────── 4. primary GID
-  │   │  └────────────────────────────────────── 3. UID
-  │   └───────────────────────────────────────── 2. password placeholder ('x' = see /etc/shadow)
-  └───────────────────────────────────────────── 1. username
+```bash
+vagrant ssh server1    # or ssh into your practice VM
 ```
 
-Seven fields. The `x` in field 2 means "the hash lives in `/etc/shadow`". A **completely empty** field 2 means no password is required at all, which is a security hole worth recognising.
+**How to use this file:**
 
-### /etc/group format
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
 
-```text
-devs:x:1005:alice,bob,carol
-  │  │  │        │
-  │  │  │        └─ 4. SECONDARY members, comma-separated
-  │  │  └────────── 3. GID
-  │  └───────────── 2. password placeholder
-  └──────────────── 1. group name
+Creating users without setting passwords is the most common incomplete-task mistake on the exam. The follow-along makes that stick.
+
+---
+
+## Follow Along
+
+Work on your lab VM as root or with `sudo`. After each step, compare your output to **You should see**.
+
+### 1. The four account files
+
+```bash
+ls -l /etc/passwd /etc/shadow /etc/group /etc/gshadow
+head -3 /etc/passwd
 ```
 
-**Field 4 lists only secondary members.** A user whose *primary* group is `devs` does **not** appear here. This is why `groups alice` and `grep devs /etc/group` can disagree, and it is a genuine source of confusion.
+**You should see** `/etc/passwd` and `/etc/group` are world-readable (`644`). `/etc/shadow` and `/etc/gshadow` are mode `000` — root only.
 
-### UID and GID ranges
+Account definitions live in `passwd`; password hashes and aging live in `shadow`.
 
-| Range | Purpose |
-| --- | --- |
-| **0** | root |
-| 1-200 | Static system accounts assigned by Red Hat |
-| 201-999 | Dynamic system accounts (daemons) |
-| **1000-60000** | **Regular user accounts** |
-| 65534 | `nobody` |
+### 2. Read a passwd entry
 
-Defined in `/etc/login.defs`:
+```bash
+getent passwd root
+```
+
+**You should see** seven colon-separated fields:
+
+```text
+root:x:0:0:root:/root:/bin/bash
+  │   │  │  │   │     │      └─ login shell
+  │   │  │  │   │     └──────── home directory
+  │   │  │  │   └────────────── GECOS / comment
+  │   │  │  └────────────────── primary GID
+  │   │  └───────────────────── UID
+  │   └──────────────────────── password placeholder ('x' = see shadow)
+  └──────────────────────────── username
+```
+
+The `x` in field 2 means the hash is in `/etc/shadow`. An **empty** field 2 means no password is required — a security hole.
+
+### 3. Primary versus secondary group membership
+
+```bash
+grep '^wheel:' /etc/group
+id root
+```
+
+**You should see** field 4 of `/etc/group` lists **secondary** members only. A user whose *primary* group is `wheel` does **not** appear there. That is why `groups alice` and `grep devs /etc/group` can disagree.
+
+### 4. UID ranges for regular users
 
 ```bash
 grep -E '^(UID_MIN|UID_MAX|GID_MIN|GID_MAX|SYS_UID)' /etc/login.defs
+awk -F: '$3 >= 1000 && $3 < 65534 {print $1, $3}' /etc/passwd | head
 ```
 
-**Regular users start at 1000.** That fact is used constantly, for example `awk -F: '$3>=1000' /etc/passwd`.
+**You should see** regular users start at UID **1000**. UID 0 is root; 65534 is `nobody`. The exam constantly asks you to filter on `$3 >= 1000`.
 
-### User private groups
-
-RHEL creates a group with the same name and GID as each new user, and makes it that user's primary group. This is why a regular user's default umask can safely be `002`: group-write only affects a group containing just that one user.
+### 5. Create a user with defaults
 
 ```bash
-useradd alice
-id alice
-# uid=1001(alice) gid=1001(alice) groups=1001(alice)
+sudo useradd demo1
+id demo1
+sudo getent shadow demo1 | cut -d: -f2 | head -c 5
 ```
 
-### useradd
+**You should see** a user private group with the same name and GID, and a home directory under `/home/demo1`. The shadow hash starts with `!!` — **locked, no password set**.
+
+**`useradd` does not set a password.** The account cannot log in until you run `passwd`.
+
+### 6. Lowercase `-g` versus uppercase `-G`
 
 ```bash
-useradd alice                          # all defaults
-useradd -u 1500 alice                  # specific UID
-useradd -g devs alice                  # PRIMARY group (must already exist)
-useradd -G devs,ops alice              # SECONDARY groups
-useradd -c "Alice Smith" alice         # GECOS comment
-useradd -d /opt/alice alice            # custom home directory
-useradd -s /bin/bash alice             # login shell
-useradd -s /sbin/nologin svcacct       # NO interactive login
-useradd -M alice                       # do NOT create a home directory
-useradd -m alice                       # create it (default on RHEL anyway)
-useradd -r svcacct                     # SYSTEM account: UID below 1000, no aging
-useradd -e 2026-12-31 contractor       # account expiry date
-useradd -f 30 alice                    # inactive days after password expiry
-useradd -N alice                       # do not create a user private group
-
-# A realistic combination
-useradd -u 1500 -g devs -G ops,wheel -c "Alice Smith" -s /bin/bash alice
+sudo groupadd labteam
+sudo useradd -g labteam -G wheel demo2
+id demo2
 ```
 
-**`useradd` does not set a password.** The account is created with a locked password (`!!` in `/etc/shadow`), so the user cannot log in until you run `passwd`. Forgetting this is the most common incomplete-task error.
+**You should see** `gid=...(labteam)` as the primary group and `wheel` in the groups list.
 
-Defaults come from:
+**`-g` is primary (lowercase). `-G` is secondary (uppercase).** Swapping them fails the task.
+
+### 7. Append to groups — never replace by accident
 
 ```bash
-cat /etc/default/useradd        # shell, skel, home base, inactive, expire
-grep -v '^#' /etc/login.defs | grep -v '^$'
-useradd -D                      # show the defaults
-useradd -D -s /bin/bash         # CHANGE a default
+sudo usermod -aG labteam demo2
+id demo2
 ```
 
-### usermod
+**You should see** demo2 still in `wheel` **and** now also in `labteam`.
+
+Compare what `-G` alone would do:
 
 ```bash
-usermod -c "New Name" alice
-usermod -u 1600 alice                  # change UID
-usermod -g newprimary alice            # change PRIMARY group
-usermod -aG devs alice                 # APPEND to secondary groups
-usermod -G devs,ops alice              # REPLACE all secondary groups
-usermod -s /sbin/nologin alice         # change shell
-usermod -d /opt/alice alice            # change home dir (does not move files)
-usermod -d /opt/alice -m alice         # change AND MOVE the files
-usermod -l newname oldname             # rename the login
-usermod -L alice                       # LOCK the password
-usermod -U alice                       # UNLOCK
-usermod -e 2026-12-31 alice            # expiry date
-usermod -e '' alice                    # remove expiry
+# DO NOT run on a real exam account — this REPLACES all secondary groups:
+# sudo usermod -G labteam demo2    # would REMOVE wheel silently
 ```
 
-**`-aG` versus `-G` is the single most important distinction in this file.**
+**Always use `-aG` to add.** Plain `-G` replaces the entire secondary list.
+
+### 8. Set a password non-interactively
 
 ```bash
-usermod -aG devs alice       # ADDS devs, keeps existing groups
-usermod -G devs alice        # REPLACES all secondary groups with just devs
+echo 'Redhat123' | sudo passwd --stdin demo1
+sudo passwd -S demo1
 ```
 
-Running `usermod -G devs alice` when alice was already in `wheel` **silently removes her from `wheel`**, which can break sudo access. Always use `-aG` unless you specifically intend to replace the whole list.
+**You should see** `PS` (password set), not `LK` (locked). On portable systems: `echo 'demo1:Redhat123' | sudo chpasswd`.
 
-### userdel
+### 9. Delete a user — with and without home
 
 ```bash
-userdel alice              # remove the account, LEAVE the home directory
-userdel -r alice           # remove the account AND home directory and mail spool
-userdel -f alice           # force, even if logged in
+sudo userdel demo2          # account gone, home may remain
+sudo useradd -M -s /sbin/nologin demo3
+sudo userdel -r demo3       # account AND home/mail spool removed
+getent passwd demo2 demo3   # no output
 ```
 
-**`-r` is what "delete the user and their home directory" means.** Without it, `/home/alice` remains and its files become owned by an orphaned UID.
+**You should see** no entries for either user. **`-r` is what "delete user and home directory" means.**
 
-After deleting users, orphaned files are worth finding:
+Find orphaned files after careless deletes:
 
 ```bash
-sudo find / -nouser -o -nogroup 2>/dev/null
+sudo find /home -nouser -o -nogroup 2>/dev/null
 ```
 
-### Groups
+### 10. Group management
 
 ```bash
-groupadd devs
-groupadd -g 2000 devs              # specific GID
-groupadd -r sysgroup               # system group, GID below 1000
-
-groupmod -n newname oldname        # RENAME
-groupmod -g 2500 devs              # change GID
-
-groupdel devs                      # delete
+sudo groupadd -g 4000 auditors
+sudo groupmod -n auditgrp auditors
+getent group auditgrp
+sudo groupdel auditgrp
 ```
 
-`groupdel` refuses to remove a group that is any user's **primary** group. Change that user's primary group first, or delete the user.
+**You should see** the group rename keeps the same GID — file ownership is unaffected. `groupdel` refuses if the group is anyone's primary group.
 
-Managing membership:
+Add/remove members:
 
 ```bash
-usermod -aG devs alice             # the usual way
-gpasswd -a alice devs              # add a member
-gpasswd -d alice devs              # REMOVE a member
-gpasswd -M alice,bob,carol devs    # set the member list exactly
-gpasswd -A alice devs              # make alice a group administrator
+sudo groupadd devs
+sudo usermod -aG devs demo1
+sudo gpasswd -d demo1 devs      # clean one-member removal
 ```
 
-`gpasswd -d` is the clean way to remove one member. Doing it with `usermod -G` means retyping the whole list correctly, which is error-prone.
-
-### Inspecting
+### 11. Inspect accounts — prefer getent
 
 ```bash
-id                                 # yourself
-id alice                           # uid, gid, all groups
-id -u alice                        # UID only
-id -g alice                        # primary GID only
-id -G alice                        # all GIDs
-id -nG alice                       # all group NAMES
-
-groups alice                       # group names
-getent passwd alice                # the passwd entry (works with LDAP too)
-getent group devs
-getent passwd | wc -l              # every account, all sources
-lslogins                           # a nice summary table
-lslogins -u                        # only user accounts
-
-who                                # who is logged in now
-w                                  # who, plus what they are doing
-last                               # login history
-lastlog                            # last login per account
-lastb                              # failed login attempts
+id demo1
+getent passwd demo1
+getent group wheel
+groups demo1
+who
+w
 ```
 
-**Prefer `getent` over `grep` on `/etc/passwd`.** `getent` consults every configured name source, so it works identically on a system using LDAP or SSSD. On the exam either works, but `getent` is the better habit.
+**You should see** `getent` works like grepping the files but also covers LDAP/SSSD sources. **`id`** is the right tool for membership questions, not `grep` on `/etc/group`.
 
-### Switching users
+### 12. Switch users — the dash matters
 
 ```bash
-su alice                # switch user, KEEP the current environment and cwd
-su - alice              # LOGIN shell: full environment, cd to home. PREFERRED
-su -l alice             # same as su -
-su -                    # become root with a login shell
-su - alice -c 'whoami'  # run one command as alice
-
-sudo -u alice command    # run one command as alice
-sudo -i                  # root login shell
-sudo -s                  # root shell, current environment
-sudo -l                  # what am I allowed to run
+sudo su - demo1 -c 'pwd; echo $HOME; whoami'
+sudo su demo1 -c 'pwd; echo $HOME'
 ```
 
-**`su - alice` versus `su alice` matters.** Without the dash you keep your own `PATH`, `HOME`, and working directory, so scripts behave oddly and `~` points at the wrong place. Always use the dash.
+**You should see** `su - demo1` lands in `/home/demo1` with demo1's environment. Without the dash, `$HOME` and the working directory stay yours.
 
-### Shells and nologin
+Any task saying "log in as" or "switch to" means **`su - user`**.
+
+### 13. Block interactive login
 
 ```bash
-cat /etc/shells                    # valid login shells
-usermod -s /sbin/nologin svcacct   # prevent interactive login
-usermod -s /bin/bash alice         # allow it
-chsh -s /bin/bash alice
+sudo useradd -s /sbin/nologin svcacct
+getent passwd svcacct | cut -d: -f7
+sudo su - svcacct
 ```
 
-`/sbin/nologin` prints a message and exits. Service accounts should have it. If a task says "create an account that cannot log in interactively", this is the answer — not a locked password, which is a different thing.
+**You should see** shell `/sbin/nologin` and the message "This account is currently not available."
 
 | Mechanism | Effect |
 | --- | --- |
-| `usermod -s /sbin/nologin` | No interactive shell. SSH keys and `su` also fail |
-| `usermod -L` | Password disabled (`!` prefix). **SSH key auth still works** |
-| `chage -E 0` | Account expired. All access denied |
-| `passwd -d` | Password **removed** — dangerous, allows empty-password login |
+| `usermod -s /sbin/nologin` | No interactive shell; SSH keys and `su` also fail |
+| `usermod -L` | Password disabled; **SSH key auth still works** |
+| `chage -E 0` | Account expired; all access denied |
 
-The distinction between `-L` and `nologin` is examinable: locking the password does **not** stop key-based SSH login.
+### 14. Seed new home directories with /etc/skel
 
-## Tasks
+```bash
+grep SKEL /etc/default/useradd
+ls -la /etc/skel/
+echo 'Welcome to the system.' | sudo tee /etc/skel/README
+sudo useradd skeltest
+ls -la /home/skeltest/README
+sudo userdel -r skeltest
+```
+
+**You should see** `/etc/skel` copied into every new home directory. Existing users are not affected — copy files to them manually.
+
+### Mini checkpoint
+
+Before the practice tasks, you should be able to explain:
+
+| Flag / command | Does |
+| --- | --- |
+| `-g` | primary group |
+| `-G` | secondary groups |
+| `-aG` | append to secondary groups |
+| `-M` | no home directory |
+| `-r` (userdel) | remove home and mail spool |
+| `su - user` | full login environment |
+| `getent` | query all name sources |
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Create the group `sysadmin` with GID `3000`.
 
+> Hint: `groupadd -g`.
+
 **Task 2.** Create the user `natasha` with UID `1500`, a comment of `Natasha R`, primary group `sysadmin`, and the bash shell.
+
+> Hint: `-u`, `-c`, `-g` (lowercase), `-s`. Create the group first.
 
 **Task 3.** Create the user `harry` as a member of the secondary group `sysadmin` without changing his primary group.
 
+> Hint: uppercase `-G` for secondary; primary stays the user private group.
+
 **Task 4.** Create the user `sarah` who cannot log in interactively and has no home directory.
+
+> Hint: `-M` and `-s /sbin/nologin`.
 
 **Task 5.** Add existing user `harry` to the additional group `wheel` without removing him from any group he is already in.
 
+> Hint: `usermod -aG`, never plain `-G`.
+
 **Task 6.** Show every group `harry` belongs to, and identify which is his primary group.
+
+> Hint: `id`, `id -gn`, `id -Gn`.
 
 **Task 7.** Set a password of `Redhat123` for `natasha` non-interactively.
 
+> Hint: `passwd --stdin` on Red Hat, or `chpasswd`.
+
 **Task 8.** Rename the group `sysadmin` to `admins`, then confirm existing members are still in it.
+
+> Hint: `groupmod -n`; GID unchanged so membership persists.
 
 **Task 9.** Remove `harry` from the group `admins` without touching his other memberships.
 
+> Hint: `gpasswd -d` is cleaner than restating the whole list with `usermod -G`.
+
 **Task 10.** Create the user `contractor` whose account expires on 31 December 2026.
+
+> Hint: `useradd -e` with `YYYY-MM-DD`, or `chage -E`.
 
 **Task 11.** Lock `natasha`'s account so she cannot authenticate with a password, then verify from `/etc/shadow` that it is locked, then unlock it.
 
+> Hint: `usermod -L` / `-U`; locked hash starts with `!`; `passwd -S` shows `LK`.
+
 **Task 12.** Delete the user `sarah` completely, including her home directory if one exists.
+
+> Hint: `userdel -r`.
 
 **Task 13.** List all regular user accounts on the system, that is those with UID 1000 or above, showing username and UID only.
 
+> Hint: `awk -F: '$3 >= 1000'` on `/etc/passwd` or `getent passwd`.
+
 **Task 14.** Switch to user `natasha` with a full login environment and confirm her home directory and identity, then return.
+
+> Hint: `su - natasha`; compare `pwd` and `$HOME` with and without the dash.
 
 **Task 15.** Find any files on the system owned by a UID that no longer maps to a user.
 
+> Hint: `find / -nouser -o -nogroup`.
+
 **Task 16.** Configure the system so every newly created user automatically receives a file called `README` in their home directory.
+
+> Hint: place the file in `/etc/skel`; verify with a test user.
 
 ---
 
@@ -581,6 +609,242 @@ sudo passwd -S natasha        # PS, not LK
 su - natasha -c pwd           # home directory reachable
 findmnt /home                 # if /home is a separate filesystem
 ```
+
+## Quick Reference
+
+Come back here when you need a flag you forgot — not before your first pass through Follow Along.
+
+### The four files
+
+| File | Holds | Permissions |
+| --- | --- | --- |
+| **`/etc/passwd`** | Account definitions | `644`, world-readable |
+| **`/etc/shadow`** | Password hashes and aging | **`000`** — root-only |
+| **`/etc/group`** | Group definitions and secondary members | `644` |
+| `/etc/gshadow` | Group passwords, rarely used | `000` |
+
+### /etc/passwd format
+
+```text
+alice:x:1001:1001:Alice Smith:/home/alice:/bin/bash
+  │   │  │    │        │           │          │
+  │   │  │    │        │           │          └─ 7. login shell
+  │   │  │    │        │           └──────────── 6. home directory
+  │   │  │    │        └──────────────────────── 5. GECOS / comment
+  │   │  │    └───────────────────────────────── 4. primary GID
+  │   │  └────────────────────────────────────── 3. UID
+  │   └───────────────────────────────────────── 2. password placeholder ('x' = see /etc/shadow)
+  └───────────────────────────────────────────── 1. username
+```
+
+Seven fields. The `x` in field 2 means "the hash lives in `/etc/shadow`". A **completely empty** field 2 means no password is required at all, which is a security hole worth recognising.
+
+### /etc/group format
+
+```text
+devs:x:1005:alice,bob,carol
+  │  │  │        │
+  │  │  │        └─ 4. SECONDARY members, comma-separated
+  │  │  └────────── 3. GID
+  │  └───────────── 2. password placeholder
+  └──────────────── 1. group name
+```
+
+**Field 4 lists only secondary members.** A user whose *primary* group is `devs` does **not** appear here. This is why `groups alice` and `grep devs /etc/group` can disagree, and it is a genuine source of confusion.
+
+### UID and GID ranges
+
+| Range | Purpose |
+| --- | --- |
+| **0** | root |
+| 1-200 | Static system accounts assigned by Red Hat |
+| 201-999 | Dynamic system accounts (daemons) |
+| **1000-60000** | **Regular user accounts** |
+| 65534 | `nobody` |
+
+Defined in `/etc/login.defs`:
+
+```bash
+grep -E '^(UID_MIN|UID_MAX|GID_MIN|GID_MAX|SYS_UID)' /etc/login.defs
+```
+
+**Regular users start at 1000.** That fact is used constantly, for example `awk -F: '$3>=1000' /etc/passwd`.
+
+### User private groups
+
+RHEL creates a group with the same name and GID as each new user, and makes it that user's primary group. This is why a regular user's default umask can safely be `002`: group-write only affects a group containing just that one user.
+
+```bash
+useradd alice
+id alice
+# uid=1001(alice) gid=1001(alice) groups=1001(alice)
+```
+
+### useradd
+
+```bash
+useradd alice                          # all defaults
+useradd -u 1500 alice                  # specific UID
+useradd -g devs alice                  # PRIMARY group (must already exist)
+useradd -G devs,ops alice              # SECONDARY groups
+useradd -c "Alice Smith" alice         # GECOS comment
+useradd -d /opt/alice alice            # custom home directory
+useradd -s /bin/bash alice             # login shell
+useradd -s /sbin/nologin svcacct       # NO interactive login
+useradd -M alice                       # do NOT create a home directory
+useradd -m alice                       # create it (default on RHEL anyway)
+useradd -r svcacct                     # SYSTEM account: UID below 1000, no aging
+useradd -e 2026-12-31 contractor       # account expiry date
+useradd -f 30 alice                    # inactive days after password expiry
+useradd -N alice                       # do not create a user private group
+
+# A realistic combination
+useradd -u 1500 -g devs -G ops,wheel -c "Alice Smith" -s /bin/bash alice
+```
+
+**`useradd` does not set a password.** The account is created with a locked password (`!!` in `/etc/shadow`), so the user cannot log in until you run `passwd`. Forgetting this is the most common incomplete-task error.
+
+Defaults come from:
+
+```bash
+cat /etc/default/useradd        # shell, skel, home base, inactive, expire
+grep -v '^#' /etc/login.defs | grep -v '^$'
+useradd -D                      # show the defaults
+useradd -D -s /bin/bash         # CHANGE a default
+```
+
+### usermod
+
+```bash
+usermod -c "New Name" alice
+usermod -u 1600 alice                  # change UID
+usermod -g newprimary alice            # change PRIMARY group
+usermod -aG devs alice                 # APPEND to secondary groups
+usermod -G devs,ops alice              # REPLACE all secondary groups
+usermod -s /sbin/nologin alice         # change shell
+usermod -d /opt/alice alice            # change home dir (does not move files)
+usermod -d /opt/alice -m alice         # change AND MOVE the files
+usermod -l newname oldname             # rename the login
+usermod -L alice                       # LOCK the password
+usermod -U alice                       # UNLOCK
+usermod -e 2026-12-31 alice            # expiry date
+usermod -e '' alice                    # remove expiry
+```
+
+**`-aG` versus `-G` is the single most important distinction in this file.**
+
+```bash
+usermod -aG devs alice       # ADDS devs, keeps existing groups
+usermod -G devs alice        # REPLACES all secondary groups with just devs
+```
+
+Running `usermod -G devs alice` when alice was already in `wheel` **silently removes her from `wheel`**, which can break sudo access. Always use `-aG` unless you specifically intend to replace the whole list.
+
+### userdel
+
+```bash
+userdel alice              # remove the account, LEAVE the home directory
+userdel -r alice           # remove the account AND home directory and mail spool
+userdel -f alice           # force, even if logged in
+```
+
+**`-r` is what "delete the user and their home directory" means.** Without it, `/home/alice` remains and its files become owned by an orphaned UID.
+
+After deleting users, orphaned files are worth finding:
+
+```bash
+sudo find / -nouser -o -nogroup 2>/dev/null
+```
+
+### Groups
+
+```bash
+groupadd devs
+groupadd -g 2000 devs              # specific GID
+groupadd -r sysgroup               # system group, GID below 1000
+
+groupmod -n newname oldname        # RENAME
+groupmod -g 2500 devs              # change GID
+
+groupdel devs                      # delete
+```
+
+`groupdel` refuses to remove a group that is any user's **primary** group. Change that user's primary group first, or delete the user.
+
+Managing membership:
+
+```bash
+usermod -aG devs alice             # the usual way
+gpasswd -a alice devs              # add a member
+gpasswd -d alice devs              # REMOVE a member
+gpasswd -M alice,bob,carol devs    # set the member list exactly
+gpasswd -A alice devs              # make alice a group administrator
+```
+
+`gpasswd -d` is the clean way to remove one member. Doing it with `usermod -G` means retyping the whole list correctly, which is error-prone.
+
+### Inspecting
+
+```bash
+id                                 # yourself
+id alice                           # uid, gid, all groups
+id -u alice                        # UID only
+id -g alice                        # primary GID only
+id -G alice                        # all GIDs
+id -nG alice                       # all group NAMES
+
+groups alice                       # group names
+getent passwd alice                # the passwd entry (works with LDAP too)
+getent group devs
+getent passwd | wc -l              # every account, all sources
+lslogins                           # a nice summary table
+lslogins -u                        # only user accounts
+
+who                                # who is logged in now
+w                                  # who, plus what they are doing
+last                               # login history
+lastlog                            # last login per account
+lastb                              # failed login attempts
+```
+
+**Prefer `getent` over `grep` on `/etc/passwd`.** `getent` consults every configured name source, so it works identically on a system using LDAP or SSSD. On the exam either works, but `getent` is the better habit.
+
+### Switching users
+
+```bash
+su alice                # switch user, KEEP the current environment and cwd
+su - alice              # LOGIN shell: full environment, cd to home. PREFERRED
+su -l alice             # same as su -
+su -                    # become root with a login shell
+su - alice -c 'whoami'  # run one command as alice
+
+sudo -u alice command    # run one command as alice
+sudo -i                  # root login shell
+sudo -s                  # root shell, current environment
+sudo -l                  # what am I allowed to run
+```
+
+**`su - alice` versus `su alice` matters.** Without the dash you keep your own `PATH`, `HOME`, and working directory, so scripts behave oddly and `~` points at the wrong place. Always use the dash.
+
+### Shells and nologin
+
+```bash
+cat /etc/shells                    # valid login shells
+usermod -s /sbin/nologin svcacct   # prevent interactive login
+usermod -s /bin/bash alice         # allow it
+chsh -s /bin/bash alice
+```
+
+`/sbin/nologin` prints a message and exits. Service accounts should have it. If a task says "create an account that cannot log in interactively", this is the answer — not a locked password, which is a different thing.
+
+| Mechanism | Effect |
+| --- | --- |
+| `usermod -s /sbin/nologin` | No interactive shell. SSH keys and `su` also fail |
+| `usermod -L` | Password disabled (`!` prefix). **SSH key auth still works** |
+| `chage -E 0` | Account expired. All access denied |
+| `passwd -d` | Password **removed** — dangerous, allows empty-password login |
+
+The distinction between `-L` and `nologin` is examinable: locking the password does **not** stop key-based SSH login.
 
 ## Exam Tips
 

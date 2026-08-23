@@ -2,9 +2,31 @@
 
 **Objectives:** Boot, reboot, and shut down a system normally. Boot systems into different targets manually. Configure systems to boot into a specific target automatically. Log in and switch users in multiuser targets.
 
-## Concept Refresher
+These objectives cover how a RHEL system starts, stops, and switches between run states. You will use `systemctl` for almost everything — but the exam also expects you to know when `shutdown` still matters, what happens during the boot sequence, and the difference between `rescue.target` and `emergency.target`.
 
-### Targets replaced runlevels
+## Before You Start
+
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
+
+```bash
+vagrant ssh server1    # or ssh into your practice VM
+```
+
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+Targets look like runlevels with different names until you try `isolate rescue.target` over SSH and lose your session. Do that once from a console instead.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. Targets replaced runlevels
 
 A **target** is a named group of units that systemd brings up together. It plays the role SysV runlevels used to play, but targets can depend on each other and there is no single "current runlevel" number.
 
@@ -33,46 +55,79 @@ The dependency chain, simplified:
 
 Because `graphical.target` requires `multi-user.target`, everything in multi-user also runs in graphical.
 
-**`rescue` versus `emergency`** is examinable:
+**You should see** the table above as your mental map. On the exam, old runlevel numbers still appear in task wording — know the mapping.
 
-| | `rescue.target` | `emergency.target` |
-| --- | --- | --- |
-| Filesystems | All local filesystems **mounted** | **Only `/`, and read-only** |
-| Services | Minimal set started | Essentially none |
-| Use for | A broken service, a forgotten password | **A broken `/etc/fstab`** |
-| To write files | Already writable | `mount -o remount,rw /` first |
-
-If you break `/etc/fstab` and the boot fails, you land in emergency mode, and the first thing you must do is remount root read-write. That is the single most valuable fact in this file. See `16-boot-interrupt-root-recovery.md`.
-
-### Querying and changing targets
+### 2. Query the default boot target
 
 ```bash
-systemctl get-default                       # the boot target
-sudo systemctl set-default multi-user.target
-sudo systemctl set-default graphical.target
-
-systemctl list-units --type=target          # active targets
-systemctl list-units --type=target --all
-systemctl list-dependencies multi-user.target
-
-systemctl isolate multi-user.target         # switch NOW, without rebooting
-systemctl isolate graphical.target
-sudo systemctl isolate rescue.target
-sudo systemctl isolate emergency.target
+systemctl get-default
 ```
 
-**`set-default` is persistent; `isolate` is immediate and temporary.** A task saying "the system should boot into X" means `set-default`. A task saying "switch the system to X now" means `isolate`.
+**You should see** `multi-user.target` on a server install, or `graphical.target` if a desktop environment is installed.
 
-`set-default` is implemented as a symlink, which is worth seeing:
+This is the target the system will reach on the **next reboot**. It does not change what is running right now.
+
+### 3. Set the default target persistently
+
+```bash
+sudo systemctl set-default multi-user.target
+systemctl get-default
+```
+
+**You should see** output like:
+
+```text
+Removed /etc/systemd/system/default.target.
+Created symlink /etc/systemd/system/default.target → /usr/lib/systemd/system/multi-user.target.
+```
+
+**`set-default` is persistent.** A task saying "the system should boot into X" means `set-default`, not `isolate`.
+
+To set graphical instead:
+
+```bash
+sudo systemctl set-default graphical.target
+```
+
+Switch back for now:
+
+```bash
+sudo systemctl set-default multi-user.target
+```
+
+### 4. See what `set-default` actually modifies
 
 ```bash
 ls -l /etc/systemd/system/default.target
-# -> /usr/lib/systemd/system/multi-user.target
+readlink -f /etc/systemd/system/default.target
 ```
+
+**You should see** a symlink pointing at something like `/usr/lib/systemd/system/multi-user.target`.
 
 That is all it is. `systemctl get-default` reads that link, and `set-default` rewrites it. Consistent with `05-hard-soft-links.md`.
 
-### Shorthand commands
+### 5. Switch the running target immediately (`isolate`)
+
+```bash
+sudo systemctl isolate multi-user.target
+systemctl list-units --type=target
+```
+
+**You should see** several active targets at once — `basic.target`, `multi-user.target`, `sysinit.target`, and others. **Several targets are active simultaneously**, unlike SysV runlevels where exactly one was current.
+
+**`isolate` switches now but does not persist.** After a reboot the system returns to whatever `get-default` says.
+
+To try rescue mode (from a **VM console only**, not SSH):
+
+```bash
+sudo systemctl isolate rescue.target
+# ... explore ...
+sudo systemctl isolate multi-user.target
+```
+
+**Do not `isolate rescue.target` over SSH.** It stops `sshd`, so your session is cut off and you cannot get back. Use `virsh console` or the VirtualBox window.
+
+### 6. Shorthand reboot, poweroff, and shutdown
 
 ```bash
 sudo systemctl reboot                # = isolate reboot.target
@@ -97,9 +152,37 @@ sudo shutdown -h +5 "Maintenance in 5 minutes"
 sudo shutdown -c                     # CANCEL a scheduled shutdown
 ```
 
+**You should see** that `reboot` and `poweroff` are symlinks:
+
+```bash
+ls -l /usr/sbin/reboot
+```
+
 `shutdown` with a delay writes a message to all logged-in users and creates `/run/nologin` to prevent new logins. `shutdown -c` cancels it. Those two facts are the reason `shutdown` still exists alongside `systemctl poweroff`.
 
-### The boot sequence
+### 7. List targets and their dependencies
+
+```bash
+systemctl list-units --type=target
+systemctl list-units --type=target --all
+systemctl list-dependencies multi-user.target
+```
+
+**You should see** a tree of units that `multi-user.target` pulls in. Expand it fully:
+
+```bash
+systemctl list-dependencies multi-user.target --all
+```
+
+The reverse view is often more useful — what target wants a given service:
+
+```bash
+systemctl list-dependencies --reverse httpd
+```
+
+**You should see** that `httpd` is wanted by `multi-user.target`, which is exactly what `systemctl enable` arranged.
+
+### 8. The boot sequence — where things go wrong
 
 Knowing the order tells you where to intervene when something fails.
 
@@ -130,84 +213,183 @@ Where things go wrong, mapped to the fix:
 | Boots but a service is dead | 7 | `14-systemd-services.md` — `systemctl --failed` |
 | Boots to a text prompt when a GUI was wanted | 4 | `set-default graphical.target` |
 
-### Inspecting the boot
+**You should see** stage 5 as the fstab failure point. That is why emergency mode exists.
+
+### 9. Inspect boot time
 
 ```bash
-systemd-analyze                       # total boot time, split kernel/initrd/userspace
-systemd-analyze blame                 # slowest units
-systemd-analyze critical-chain        # what actually delayed the boot
-systemctl --failed                    # what did not start
-journalctl -b                         # this boot's log
-journalctl -b -1                      # the PREVIOUS boot
-journalctl --list-boots               # every recorded boot
-journalctl -p err -b                  # errors this boot
-who -b                                # last boot time
-uptime -s                             # boot timestamp
+systemd-analyze
+systemd-analyze blame | head -5
+systemd-analyze critical-chain
 ```
 
-### Multiuser login and switching users
+**You should see** total boot time split into kernel, initrd, and userspace phases. Example:
+
+```text
+Startup finished in 1.234s (kernel) + 2.567s (initrd) + 8.901s (userspace) = 12.702s
+multi-user.target reached after 8.756s in userspace
+```
+
+`blame` sorts by duration regardless of whether anything waited for the unit. `critical-chain` follows the dependency path that determined the total — for "why is my boot slow", `critical-chain` is the better answer.
+
+### 10. Check failed units and boot logs
+
+```bash
+systemctl --failed
+journalctl -b
+journalctl -b -1
+journalctl --list-boots
+journalctl -p err -b
+who -b
+uptime -s
+```
+
+**You should see** `systemctl --failed` as the first command after any reboot — it shows units that did not start.
+
+`-b` is this boot's log; `-b -1` is the previous boot. **This only works if the journal is persistent** (see `18-logs-journald.md`). If `journalctl --list-boots` shows only the current boot, the journal is memory-backed in `/run/log/journal` and previous boots are gone.
+
+### 11. Multiuser login and switching users
 
 The "log in and switch users in multiuser targets" objective:
 
 ```bash
-# Virtual consoles: Ctrl+Alt+F2 .. F6 on physical or VM console
-who                          # who is logged in and on which terminal
-w                            # plus what they are doing
-tty                          # which terminal am I on
-loginctl list-sessions       # systemd's view of sessions
+who
+w
+tty
+loginctl list-sessions
 loginctl session-status 3
 loginctl user-status alice
+su - alice
+sudo -i
+exit
+```
+
+**You should see** `who` giving user, terminal, and login time. `w` adds load average and what each user is running. `loginctl list-sessions` is systemd's view, with session IDs you can act on.
+
+To forcibly end a session:
+
+```bash
 sudo loginctl terminate-session 3
 sudo loginctl terminate-user alice
-
-su - alice                   # login shell as alice
-sudo -i                      # root login shell
-exit                         # or Ctrl+d
 ```
 
 `loginctl` is systemd's session manager and is the modern way to see and end sessions. `who` and `w` remain the quick answers.
 
-### Broadcasting to users
+Virtual consoles on physical or VM console: **Ctrl+Alt+F2 .. F6**.
+
+### 12. `rescue` versus `emergency`
+
+| | `rescue.target` | `emergency.target` |
+| --- | --- | --- |
+| Filesystems | All local filesystems **mounted** | **Only `/`, and read-only** |
+| Services | Minimal set started | Essentially none |
+| Use for | A broken service, a forgotten password | **A broken `/etc/fstab`** |
+| To write files | Already writable | `mount -o remount,rw /` first |
+
+**You should see** that a bad entry in `/etc/fstab` lands you in **`emergency.target`**, because mounting local filesystems happens during `sysinit.target`, before rescue mode's prerequisites are satisfied.
+
+If you break `/etc/fstab` and the boot fails, you land in emergency mode, and the first thing you must do is remount root read-write. That is the single most valuable fact in this file. See `16-boot-interrupt-root-recovery.md`.
+
+The recovery sequence, which is worth memorising:
+
+```bash
+# 1. Root is read-only, so you cannot edit anything yet
+mount -o remount,rw /
+
+# 2. Fix the offending line
+vi /etc/fstab
+
+# 3. Verify BEFORE rebooting
+findmnt --verify
+mount -a
+
+# 4. Reload the generated mount units and reboot
+systemctl daemon-reload
+reboot
+```
+
+**Step 1 is the one people forget.** Without the remount, `vi` cannot save and you are stuck.
+
+### 13. Broadcasting to users
 
 ```bash
 wall "System going down in 10 minutes"
 echo "message" | wall
 sudo shutdown -r +10 "Rebooting for maintenance"
+sudo shutdown -c
 ```
 
-## Tasks
+**You should see** the scheduled shutdown message on all logged-in terminals. Cancel with `shutdown -c` before the timer fires.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Determine the current default boot target.
 
+> Hint: one `systemctl` subcommand, no `sudo`.
+
 **Task 2.** Configure the system to boot into the text-based multi-user target by default, and confirm the change without rebooting.
+
+> Hint: `set-default` for persistence; `get-default` to confirm.
 
 **Task 3.** Show what file `systemctl set-default` actually modifies, and its current value.
 
+> Hint: `ls -l` and `readlink -f` on the symlink under `/etc/systemd/system/`.
+
 **Task 4.** Switch the running system to `rescue.target` without rebooting, then return to `multi-user.target`.
+
+> Hint: `isolate`, from a **console** — not SSH. Return the same way.
 
 **Task 5.** List every target currently active.
 
+> Hint: `list-units` with `--type=target`.
+
 **Task 6.** Show all units that `multi-user.target` pulls in.
+
+> Hint: `list-dependencies`. Add `--all` to expand the full tree.
 
 **Task 7.** Schedule a reboot for 10 minutes from now with a warning message to all users, then cancel it.
 
+> Hint: `shutdown -r +10 "message"`, then `shutdown -c`.
+
 **Task 8.** Reboot the system immediately using two different commands.
+
+> Hint: `systemctl reboot` and one traditional equivalent.
 
 **Task 9.** Determine how long the last boot took, broken down into kernel and userspace time.
 
+> Hint: `systemd-analyze` with no arguments.
+
 **Task 10.** Identify the three slowest units during the last boot.
+
+> Hint: `systemd-analyze blame`, piped to `head`.
 
 **Task 11.** Show the log from the previous boot, filtered to errors only.
 
+> Hint: `journalctl -b -1 -p err`. Needs a persistent journal.
+
 **Task 12.** Determine when the system last booted, using two different commands.
+
+> Hint: `who -b` and `uptime -s`.
 
 **Task 13.** Show all currently logged-in users and their sessions, using both traditional and systemd tools.
 
+> Hint: `who`/`w` plus `loginctl list-sessions`.
+
 **Task 14.** Forcibly end user `alice`'s login session.
+
+> Hint: find her session ID with `loginctl list-sessions`, then `terminate-session` or `terminate-user`.
 
 **Task 15.** Explain the practical difference between `rescue.target` and `emergency.target`, and state which one you would land in if `/etc/fstab` contained a bad entry.
 
+> Hint: compare filesystem mount state and which stage of boot fails.
+
 **Task 16.** Configure the system to boot into the graphical target, then revert it to multi-user.
+
+> Hint: two `set-default` calls and `get-default` after each.
 
 ---
 
@@ -566,6 +748,157 @@ journalctl -p err -b                 # errors this boot
 ```bash
 sudo findmnt --verify
 sudo mount -a && echo OK || echo "DO NOT REBOOT"
+```
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### Targets replaced runlevels
+
+| Target | Old runlevel | Purpose |
+| --- | --- | --- |
+| `poweroff.target` | 0 | Halt and power off |
+| **`rescue.target`** | **1, s, single** | **Single-user, minimal services, root shell.** Filesystems mounted |
+| `multi-user.target` | 2, 3, 4 | **Full multi-user, networking, no GUI. The server default** |
+| **`graphical.target`** | **5** | multi-user plus a display manager |
+| `reboot.target` | 6 | Reboot |
+| **`emergency.target`** | — | **Most minimal. Root filesystem mounted READ-ONLY, almost nothing else** |
+
+```text
+                                         graphical.target
+                                                │ requires
+                                         multi-user.target
+                                                │ requires
+                                           basic.target
+                                                │ requires
+                                          sysinit.target
+                                            │        │
+                                    local-fs.target  swap.target
+```
+
+**`rescue` versus `emergency`:**
+
+| | `rescue.target` | `emergency.target` |
+| --- | --- | --- |
+| Filesystems | All local filesystems **mounted** | **Only `/`, and read-only** |
+| Services | Minimal set started | Essentially none |
+| Use for | A broken service, a forgotten password | **A broken `/etc/fstab`** |
+| To write files | Already writable | `mount -o remount,rw /` first |
+
+### Querying and changing targets
+
+```bash
+systemctl get-default                       # the boot target
+sudo systemctl set-default multi-user.target
+sudo systemctl set-default graphical.target
+
+systemctl list-units --type=target          # active targets
+systemctl list-units --type=target --all
+systemctl list-dependencies multi-user.target
+
+systemctl isolate multi-user.target         # switch NOW, without rebooting
+systemctl isolate graphical.target
+sudo systemctl isolate rescue.target
+sudo systemctl isolate emergency.target
+```
+
+**`set-default` is persistent; `isolate` is immediate and temporary.** A task saying "the system should boot into X" means `set-default`. A task saying "switch the system to X now" means `isolate`.
+
+```bash
+ls -l /etc/systemd/system/default.target
+# -> /usr/lib/systemd/system/multi-user.target
+```
+
+### Shorthand commands
+
+```bash
+sudo systemctl reboot                # = isolate reboot.target
+sudo systemctl poweroff              # = isolate poweroff.target
+sudo systemctl halt                  # stop the CPU without powering off
+sudo systemctl suspend
+sudo systemctl hibernate
+sudo systemctl rescue                # = isolate rescue.target
+sudo systemctl emergency
+```
+
+```bash
+sudo reboot
+sudo poweroff
+sudo shutdown -h now                 # halt now
+sudo shutdown -r now                 # reboot now
+sudo shutdown -h +10                 # halt in 10 minutes
+sudo shutdown -r 23:30               # reboot at 23:30
+sudo shutdown -h +5 "Maintenance in 5 minutes"
+sudo shutdown -c                     # CANCEL a scheduled shutdown
+```
+
+### The boot sequence
+
+```text
+1. Firmware (BIOS or UEFI)          POST, select the boot device
+2. Boot loader (GRUB2)              /boot/grub2/grub.cfg  (BIOS)
+                                    /boot/efi/EFI/redhat/grub.cfg  (UEFI)
+   └─ press 'e' here to edit kernel arguments  <-- your intervention point
+3. Kernel + initramfs               kernel unpacks initramfs, finds the root fs
+   └─ rd.break here drops you to a shell before switching root
+4. systemd (PID 1)                  reads default.target
+5. sysinit.target                   mount local filesystems, activate swap, start udev
+   └─ a bad /etc/fstab fails HERE  -> emergency.target
+6. basic.target                     sockets, timers, paths
+7. multi-user.target                all your enabled services
+8. graphical.target                 display manager, if applicable
+9. Login prompt
+```
+
+| Symptom | Stage | Fix in |
+| --- | --- | --- |
+| No boot menu, no kernel | 2 | `17-bootloader.md` — reinstall GRUB |
+| Forgot the root password | 3 | `16-boot-interrupt-root-recovery.md` — `rd.break` |
+| "Cannot open root device" | 3 | `16-boot-interrupt-root-recovery.md` — wrong `root=` argument |
+| Drops to emergency mode | 5 | **A broken `/etc/fstab`.** `16-boot-interrupt-root-recovery.md` |
+| Boots but a service is dead | 7 | `14-systemd-services.md` — `systemctl --failed` |
+| Boots to a text prompt when a GUI was wanted | 4 | `set-default graphical.target` |
+
+### Inspecting the boot
+
+```bash
+systemd-analyze                       # total boot time, split kernel/initrd/userspace
+systemd-analyze blame                 # slowest units
+systemd-analyze critical-chain        # what actually delayed the boot
+systemctl --failed                    # what did not start
+journalctl -b                         # this boot's log
+journalctl -b -1                      # the PREVIOUS boot
+journalctl --list-boots               # every recorded boot
+journalctl -p err -b                  # errors this boot
+who -b                                # last boot time
+uptime -s                             # boot timestamp
+```
+
+### Multiuser login and switching users
+
+```bash
+# Virtual consoles: Ctrl+Alt+F2 .. F6 on physical or VM console
+who                          # who is logged in and on which terminal
+w                            # plus what they are doing
+tty                          # which terminal am I on
+loginctl list-sessions       # systemd's view of sessions
+loginctl session-status 3
+loginctl user-status alice
+sudo loginctl terminate-session 3
+sudo loginctl terminate-user alice
+
+su - alice                   # login shell as alice
+sudo -i                      # root login shell
+exit                         # or Ctrl+d
+```
+
+### Broadcasting to users
+
+```bash
+wall "System going down in 10 minutes"
+echo "message" | wall
+sudo shutdown -r +10 "Rebooting for maintenance"
 ```
 
 ## Exam Tips

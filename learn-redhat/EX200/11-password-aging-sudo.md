@@ -4,252 +4,257 @@
 
 Both halves are common exam tasks. `chage` flags and the `sudoers` file format are worth memorising precisely.
 
-## Concept Refresher
+## Before You Start
 
-### /etc/shadow field map
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
-The nine colon-separated fields, and the `chage` flag that sets each:
+```bash
+vagrant ssh server1    # or ssh into your practice VM
+```
+
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+Confusing password expiry with account expiry, or `login.defs` with existing users, loses points on otherwise correct work.
+
+---
+
+## Follow Along
+
+Work on your lab VM. Create a test user first if you need one: `sudo useradd labuser`.
+
+After each step, compare your output to **You should see**.
+
+### 1. Read shadow aging in human form
+
+```bash
+sudo chage -l labuser
+sudo getent shadow labuser
+```
+
+**You should see** dates and day counts in `chage -l`, while `getent shadow` shows raw epoch day numbers in fields 3–8.
+
+Dates in `/etc/shadow` are stored as **days since 1970-01-01**. That is why `chage -l` exists.
+
+### 2. Map shadow fields to chage flags
 
 ```text
 alice:$6$xyz...:19950:0:90:7:14:20000:
   │      │        │   │  │  │  │   │
-  │      │        │   │  │  │  │   └─ 8. account expiry date       chage -E
-  │      │        │   │  │  │  └───── 7. inactive days after expiry chage -I
-  │      │        │   │  │  └──────── 6. warning days              chage -W
-  │      │        │   │  └─────────── 5. maximum password age       chage -M
-  │      │        │   └────────────── 4. minimum password age       chage -m
-  │      │        └────────────────── 3. last change (days since epoch)  chage -d
-  │      └───────────────────────────  2. hash ('!' or '!!' prefix = locked)
+  │      │        │   │  │  │  │   └─ 8. account expiry       chage -E
+  │      │        │   │  │  │  └───── 7. inactive after expiry chage -I
+  │      │        │   │  │  └──────── 6. warning days          chage -W
+  │      │        │   │  └─────────── 5. maximum password age  chage -M
+  │      │        │   └────────────── 4. minimum password age  chage -m
+  │      │        └────────────────── 3. last change            chage -d
+  │      └───────────────────────────  2. hash ('!' = locked)
   └────────────────────────────────── 1. username
 ```
 
-**Dates are stored as days since 1970-01-01**, not as readable dates. That is why `chage -l` exists — it converts them for you.
+Memorable order: **`-m` minimum, `-M` Maximum, `-W` Warn, `-I` Inactive, `-E` Expire.**
+
+### 3. Set maximum, minimum, and warning periods
 
 ```bash
-sudo getent shadow alice
-sudo chage -l alice          # the same data, human-readable
+sudo chage -M 90 -m 7 -W 14 labuser
+sudo chage -l labuser | grep -E 'Minimum|Maximum|warning'
 ```
 
-### chage
+**You should see** maximum 90 days, minimum 7 days, warning 14 days.
+
+**Lowercase `-m` is minimum. Uppercase `-M` is maximum.** Swapping them is a common exam trap.
+
+Equivalent with `passwd`:
 
 ```bash
-chage -l alice                    # LIST current aging settings
-chage -M 90 alice                 # maximum age: must change every 90 days
-chage -m 7 alice                  # minimum age: cannot change again for 7 days
-chage -W 14 alice                 # warn 14 days before expiry
-chage -I 30 alice                 # disable account 30 days after password expires
-chage -E 2026-12-31 alice         # ACCOUNT expiry date
-chage -E -1 alice                 # remove account expiry
-chage -d 0 alice                  # FORCE a password change at next login
-chage -d 2026-08-18 alice         # set the last-change date explicitly
-chage alice                       # interactive
+sudo passwd -n 7 -x 90 -w 14 labuser
 ```
 
-**`chage -d 0` is the "must change password at next login" task.** It sets the last-change date to the epoch, so the password is immediately considered expired.
+### 4. Force a password change at next login
 
-The flags in a memorable order: **`-m` minimum, `-M` Maximum, `-W` Warn, `-I` Inactive, `-E` Expire.** Lowercase `-m` is minimum days, uppercase `-M` is maximum days.
-
-Example `chage -l` output:
-
-```text
-Last password change                                    : Aug 18, 2026
-Password expires                                        : Nov 16, 2026
-Password inactive                                       : Dec 16, 2026
-Account expires                                         : never
-Minimum number of days between password change           : 7
-Maximum number of days between password change           : 90
-Number of days of warning before password expires        : 14
+```bash
+sudo chage -d 0 labuser
+sudo chage -l labuser | head -2
 ```
 
-### Password expiry versus account expiry
+**You should see** `Last password change : password must be changed`.
 
-A distinction the exam tests.
+`-d 0` sets the last-change date to the epoch, so any non-zero `-M` makes the password immediately expired. Equivalent: `sudo passwd -e labuser`.
+
+### 5. Set an account expiry date
+
+```bash
+sudo chage -E 2027-06-30 labuser
+sudo chage -l labuser | grep -i 'account expires'
+```
+
+**You should see** `Account expires : Jun 30, 2027`. Format is **`YYYY-MM-DD`**.
+
+Remove it with `sudo chage -E -1 labuser` or `sudo usermod -e '' labuser`.
+
+### 6. Password expiry versus account expiry
 
 | | Password expiry (`-M`) | Account expiry (`-E`) |
 | --- | --- | --- |
-| What happens | User is **forced to change** the password at login | Account is **disabled entirely** |
-| Can the user recover? | Yes, by setting a new password | No, an administrator must extend it |
-| Stored in | Field 5 (max age), computed against field 3 | Field 8 (absolute date) |
-| Also set by | `usermod` has no equivalent | `usermod -e` |
+| What happens | User is **forced to change** password at login | Account is **disabled entirely** |
+| Can the user recover? | Yes, by setting a new password | No — admin must extend it |
+| Set by | `chage -M` | `chage -E` or `usermod -e` |
 
-### passwd
+**You should see** these are different columns in `chage -l`. The exam tests the distinction.
+
+### 7. Set a password non-interactively
 
 ```bash
-passwd                            # change your own
-sudo passwd alice                 # change alice's
-echo 'Pass123' | sudo passwd --stdin alice     # non-interactive (Red Hat)
-echo 'alice:Pass123' | sudo chpasswd           # non-interactive (portable)
-
-sudo passwd -l alice              # LOCK (prepends !!)
-sudo passwd -u alice              # unlock
-sudo passwd -S alice              # STATUS
-sudo passwd -e alice              # EXPIRE now, force change at next login
-sudo passwd -d alice              # DELETE the password — dangerous
-sudo passwd -n 7 -x 90 -w 14 alice   # min, max, warn — same as chage
+echo 'Redhat123' | sudo passwd --stdin labuser
+sudo passwd -S labuser
 ```
 
-`passwd -S` output decoded:
+**You should see** `labuser PS ...` — password set. Portable alternative: `echo 'labuser:Redhat123' | sudo chpasswd`.
 
-```text
-alice PS 2026-08-18 7 90 14 30
-  │    │      │     │  │  │  │
-  │    │      │     │  │  │  └─ inactive days
-  │    │      │     │  │  └──── warning days
-  │    │      │     │  └─────── max days
-  │    │      │     └────────── min days
-  │    │      └──────────────── last change
-  │    └─────────────────────── PS = set, LK = locked, NP = no password
-  └──────────────────────────── username
-```
-
-### System-wide defaults
-
-New accounts inherit aging defaults from `/etc/login.defs`. Changing them affects **future** accounts only.
+### 8. System-wide defaults for new users
 
 ```bash
 sudo grep -E '^PASS_' /etc/login.defs
 ```
 
-```text
-PASS_MAX_DAYS   99999      # effectively never expires
-PASS_MIN_DAYS   0
-PASS_WARN_AGE   7
-```
+**You should see** `PASS_MAX_DAYS`, `PASS_MIN_DAYS`, `PASS_WARN_AGE`. Edit them to change defaults for **future** accounts only:
 
 ```bash
 sudo sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS   90/' /etc/login.defs
-sudo sed -i 's/^PASS_MIN_DAYS.*/PASS_MIN_DAYS   7/'  /etc/login.defs
-sudo sed -i 's/^PASS_WARN_AGE.*/PASS_WARN_AGE   14/' /etc/login.defs
+sudo grep -E '^PASS_' /etc/login.defs
 ```
 
-**This does not change existing users.** If a task says "all users, including existing ones", you must also loop with `chage`. That is a favourite exam subtlety.
+**Existing users are unchanged.** If a task says "all users, including existing ones", you must also loop with `chage`.
 
-### Superuser access: sudo
-
-Membership of the **`wheel`** group grants full sudo on RHEL, by way of this line in `/etc/sudoers`:
-
-```text
-%wheel  ALL=(ALL)       ALL
-```
-
-So the simplest answer to "give alice administrative access" is:
-
-```bash
-sudo usermod -aG wheel alice
-```
-
-Confirm the rule is actually present and not commented out:
+### 9. Grant sudo via the wheel group
 
 ```bash
 sudo grep -E '^\s*%wheel' /etc/sudoers
+sudo usermod -aG wheel labuser
+id labuser
 ```
 
-### The sudoers line format
+**You should see** the line `%wheel  ALL=(ALL)       ALL` and `wheel` in labuser's groups.
 
-```text
-alice   ALL=(ALL)       ALL
-  │      │    │          │
-  │      │    │          └─ commands allowed
-  │      │    └──────────── users they may become  (ALL, or root, or alice)
-  │      └───────────────── hosts this rule applies on  (ALL)
-  └────────────────────────  who the rule is for  (%name = a group)
-```
+**`-aG`, not `-G`.** Membership takes effect at the user's **next login**.
 
-Common patterns:
-
-```text
-alice           ALL=(ALL)       ALL                    # full sudo, password required
-%wheel          ALL=(ALL)       ALL                    # the whole wheel group
-%wheel          ALL=(ALL)       NOPASSWD: ALL          # no password prompt
-alice           ALL=(ALL)       NOPASSWD: /usr/bin/systemctl restart httpd
-%devs           ALL=(ALL)       /usr/bin/dnf, /usr/bin/rpm
-bob             ALL=(alice)     /bin/ls                # run ls AS alice
-%ops            ALL=(ALL)       !/usr/bin/passwd root  # deny one command
-```
-
-Absolute paths are required for commands. `systemctl` will not match; `/usr/bin/systemctl` will.
-
-### Never edit /etc/sudoers directly
+### 10. Create a sudoers drop-in safely
 
 ```bash
-sudo visudo                                  # edits /etc/sudoers WITH VALIDATION
-sudo visudo -f /etc/sudoers.d/alice          # edit a drop-in with validation
-sudo visudo -c                               # check syntax of everything
-```
-
-**A syntax error in `/etc/sudoers` breaks `sudo` for everyone, including you.** `visudo` validates before saving and refuses to install a broken file. There is no reason to use plain `vim` here.
-
-If you do get locked out, the recovery is `pkexec` if available, or single-user mode via `16-boot-interrupt-root-recovery.md`.
-
-### Prefer drop-in files
-
-`/etc/sudoers` includes `/etc/sudoers.d/` at the end. Drop-ins are the modern, update-safe way.
-
-```bash
-echo 'alice ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/alice
-sudo chmod 440 /etc/sudoers.d/alice
+echo '%admins ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/admins
+sudo chmod 440 /etc/sudoers.d/admins
 sudo visudo -c
+ls -l /etc/sudoers.d/admins
 ```
 
-**Mode `440` matters.** `sudo` ignores files in `/etc/sudoers.d/` that are group- or world-writable, silently. If your rule seems to have no effect, check the permissions first.
+**You should see** mode **`440`** and `visudo -c` reports parsed OK.
 
-Also: files with a `.` or `~` in the name are ignored. Name it `alice`, not `alice.conf`.
+Files that are group- or world-writable are **silently ignored**. Filenames with a `.` or `~` are also skipped.
+
+**Never edit `/etc/sudoers` with plain vim.** Use `visudo`.
+
+### 11. Verify another user's sudo privileges
 
 ```bash
-ls -l /etc/sudoers.d/
+sudo -l -U labuser
+sudo -l                            # your own privileges
 ```
 
-### Testing sudo
+**You should see** what commands labuser may run, without logging in as her. This is the correct verification for any sudoers task.
+
+### 12. Lock and unlock a password
 
 ```bash
-sudo -l                            # what can I run
-sudo -l -U alice                   # what can ALICE run
-sudo -u alice command              # run as alice
-sudo -v                            # refresh the credential timestamp
-sudo -k                            # forget the cached credential
+sudo usermod -L labuser
+sudo getent shadow labuser | cut -d: -f2 | head -c 3
+sudo passwd -S labuser
+sudo usermod -U labuser
+sudo passwd -S labuser
 ```
 
-`sudo -l -U alice` is the correct way to verify a sudoers task without logging in as her.
+**You should see** `LK` when locked (hash prefixed with `!`), then `PS` when unlocked.
 
-### PolicyKit, briefly
+Remember: **a locked password still allows SSH key login.** Use `chage -E 0` or `nologin` to block everything.
 
-Some graphical and systemd operations use PolicyKit rather than sudo. You are unlikely to be tested on writing rules, but recognise the tool:
+### Mini checkpoint
 
-```bash
-pkexec command
-```
+| Flag | Sets |
+| --- | --- |
+| `-m` | minimum days between password changes |
+| `-M` | maximum password age |
+| `-W` | warning days before expiry |
+| `-I` | inactive days after password expires |
+| `-E` | account expiry date |
+| `-d 0` | force change at next login |
 
-## Tasks
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Set the password for user `natasha` to `Redhat123` without an interactive prompt.
 
+> Hint: `passwd --stdin` or `chpasswd`; verify with `passwd -S`.
+
 **Task 2.** Display all current password aging information for `natasha`.
+
+> Hint: `chage -l`.
 
 **Task 3.** Configure `natasha`'s account so her password must be changed every 60 days, cannot be changed more than once every 3 days, and warns her 10 days in advance.
 
+> Hint: `chage -M 60 -m 3 -W 10`; watch lowercase vs uppercase.
+
 **Task 4.** Force `natasha` to change her password at her next login.
+
+> Hint: `chage -d 0` or `passwd -e`.
 
 **Task 5.** Set `natasha`'s account to expire on 30 June 2027.
 
+> Hint: `chage -E 2027-06-30`; format `YYYY-MM-DD`.
+
 **Task 6.** Configure the system so that **newly created** users have a maximum password age of 90 days and a warning period of 14 days.
+
+> Hint: edit `PASS_MAX_DAYS` and `PASS_WARN_AGE` in `/etc/login.defs`; verify with a test user.
 
 **Task 7.** Apply a maximum password age of 90 days to **every existing** regular user account on the system.
 
+> Hint: loop `chage -M 90` over `awk -F: '$3>=1000'`.
+
 **Task 8.** Grant user `harry` full administrative privileges using the standard RHEL group mechanism.
+
+> Hint: `usermod -aG wheel`; confirm the `%wheel` rule in `/etc/sudoers`.
 
 **Task 9.** Create a sudo rule allowing every member of the group `admins` to run all commands **without being prompted for a password**. Use a drop-in file and validate it.
 
+> Hint: `%admins`, `NOPASSWD:`, mode `440`, `visudo -c`; no dot in the filename.
+
 **Task 10.** Create a sudo rule allowing user `bob` to run only `/usr/bin/systemctl restart httpd` and nothing else.
+
+> Hint: `visudo -f /etc/sudoers.d/bob`; use the absolute path from `which systemctl`.
 
 **Task 11.** Verify what commands `bob` is permitted to run via sudo, without logging in as him.
 
+> Hint: `sudo -l -U bob`.
+
 **Task 12.** Lock `natasha`'s password, verify the lock in `/etc/shadow`, then unlock it.
+
+> Hint: `usermod -L` / `-U`; hash starts with `!`; `passwd -S` shows `LK`.
 
 **Task 13.** Configure the account `contractor` so that it is automatically disabled 15 days after its password expires.
 
+> Hint: `chage -I 15` — capital I for inactive period.
+
 **Task 14.** Determine which users on the system currently have passwords that never expire.
 
+> Hint: field 5 empty or `99999` in `/etc/shadow`, or `chage -l` maximum of 99999.
+
 **Task 15.** A sudo drop-in file exists at `/etc/sudoers.d/devteam` but appears to have no effect. Diagnose and fix it.
+
+> Hint: check permissions (`440`), filename (no dots), and `#includedir` in `/etc/sudoers`.
 
 ---
 
@@ -590,6 +595,223 @@ sudo visudo -c                     # all files parse
 sudo -l -U harry                   # rule still in effect
 sudo chage -l natasha | head -4    # aging still set
 id harry                           # still in wheel
+```
+
+## Quick Reference
+
+Come back here when you need a flag you forgot — not before your first pass through Follow Along.
+
+### /etc/shadow field map
+
+The nine colon-separated fields, and the `chage` flag that sets each:
+
+```text
+alice:$6$xyz...:19950:0:90:7:14:20000:
+  │      │        │   │  │  │  │   │
+  │      │        │   │  │  │  │   └─ 8. account expiry date       chage -E
+  │      │        │   │  │  │  └───── 7. inactive days after expiry chage -I
+  │      │        │   │  │  └──────── 6. warning days              chage -W
+  │      │        │   │  └─────────── 5. maximum password age       chage -M
+  │      │        │   └────────────── 4. minimum password age       chage -m
+  │      │        └────────────────── 3. last change (days since epoch)  chage -d
+  │      └───────────────────────────  2. hash ('!' or '!!' prefix = locked)
+  └────────────────────────────────── 1. username
+```
+
+**Dates are stored as days since 1970-01-01**, not as readable dates. That is why `chage -l` exists — it converts them for you.
+
+```bash
+sudo getent shadow alice
+sudo chage -l alice          # the same data, human-readable
+```
+
+### chage
+
+```bash
+chage -l alice                    # LIST current aging settings
+chage -M 90 alice                 # maximum age: must change every 90 days
+chage -m 7 alice                  # minimum age: cannot change again for 7 days
+chage -W 14 alice                 # warn 14 days before expiry
+chage -I 30 alice                 # disable account 30 days after password expires
+chage -E 2026-12-31 alice         # ACCOUNT expiry date
+chage -E -1 alice                 # remove account expiry
+chage -d 0 alice                  # FORCE a password change at next login
+chage -d 2026-08-18 alice         # set the last-change date explicitly
+chage alice                       # interactive
+```
+
+**`chage -d 0` is the "must change password at next login" task.** It sets the last-change date to the epoch, so the password is immediately considered expired.
+
+The flags in a memorable order: **`-m` minimum, `-M` Maximum, `-W` Warn, `-I` Inactive, `-E` Expire.** Lowercase `-m` is minimum days, uppercase `-M` is maximum days.
+
+Example `chage -l` output:
+
+```text
+Last password change                                    : Aug 18, 2026
+Password expires                                        : Nov 16, 2026
+Password inactive                                       : Dec 16, 2026
+Account expires                                         : never
+Minimum number of days between password change           : 7
+Maximum number of days between password change           : 90
+Number of days of warning before password expires        : 14
+```
+
+### Password expiry versus account expiry
+
+A distinction the exam tests.
+
+| | Password expiry (`-M`) | Account expiry (`-E`) |
+| --- | --- | --- |
+| What happens | User is **forced to change** the password at login | Account is **disabled entirely** |
+| Can the user recover? | Yes, by setting a new password | No, an administrator must extend it |
+| Stored in | Field 5 (max age), computed against field 3 | Field 8 (absolute date) |
+| Also set by | `usermod` has no equivalent | `usermod -e` |
+
+### passwd
+
+```bash
+passwd                            # change your own
+sudo passwd alice                 # change alice's
+echo 'Pass123' | sudo passwd --stdin alice     # non-interactive (Red Hat)
+echo 'alice:Pass123' | sudo chpasswd           # non-interactive (portable)
+
+sudo passwd -l alice              # LOCK (prepends !!)
+sudo passwd -u alice              # unlock
+sudo passwd -S alice              # STATUS
+sudo passwd -e alice              # EXPIRE now, force change at next login
+sudo passwd -d alice              # DELETE the password — dangerous
+sudo passwd -n 7 -x 90 -w 14 alice   # min, max, warn — same as chage
+```
+
+`passwd -S` output decoded:
+
+```text
+alice PS 2026-08-18 7 90 14 30
+  │    │      │     │  │  │  │
+  │    │      │     │  │  │  └─ inactive days
+  │    │      │     │  │  └──── warning days
+  │    │      │     │  └─────── max days
+  │    │      │     └────────── min days
+  │    │      └──────────────── last change
+  │    └─────────────────────── PS = set, LK = locked, NP = no password
+  └──────────────────────────── username
+```
+
+### System-wide defaults
+
+New accounts inherit aging defaults from `/etc/login.defs`. Changing them affects **future** accounts only.
+
+```bash
+sudo grep -E '^PASS_' /etc/login.defs
+```
+
+```text
+PASS_MAX_DAYS   99999      # effectively never expires
+PASS_MIN_DAYS   0
+PASS_WARN_AGE   7
+```
+
+```bash
+sudo sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS   90/' /etc/login.defs
+sudo sed -i 's/^PASS_MIN_DAYS.*/PASS_MIN_DAYS   7/'  /etc/login.defs
+sudo sed -i 's/^PASS_WARN_AGE.*/PASS_WARN_AGE   14/' /etc/login.defs
+```
+
+**This does not change existing users.** If a task says "all users, including existing ones", you must also loop with `chage`. That is a favourite exam subtlety.
+
+### Superuser access: sudo
+
+Membership of the **`wheel`** group grants full sudo on RHEL, by way of this line in `/etc/sudoers`:
+
+```text
+%wheel  ALL=(ALL)       ALL
+```
+
+So the simplest answer to "give alice administrative access" is:
+
+```bash
+sudo usermod -aG wheel alice
+```
+
+Confirm the rule is actually present and not commented out:
+
+```bash
+sudo grep -E '^\s*%wheel' /etc/sudoers
+```
+
+### The sudoers line format
+
+```text
+alice   ALL=(ALL)       ALL
+  │      │    │          │
+  │      │    │          └─ commands allowed
+  │      │    └──────────── users they may become  (ALL, or root, or alice)
+  │      └───────────────── hosts this rule applies on  (ALL)
+  └────────────────────────  who the rule is for  (%name = a group)
+```
+
+Common patterns:
+
+```text
+alice           ALL=(ALL)       ALL                    # full sudo, password required
+%wheel          ALL=(ALL)       ALL                    # the whole wheel group
+%wheel          ALL=(ALL)       NOPASSWD: ALL          # no password prompt
+alice           ALL=(ALL)       NOPASSWD: /usr/bin/systemctl restart httpd
+%devs           ALL=(ALL)       /usr/bin/dnf, /usr/bin/rpm
+bob             ALL=(alice)     /bin/ls                # run ls AS alice
+%ops            ALL=(ALL)       !/usr/bin/passwd root  # deny one command
+```
+
+Absolute paths are required for commands. `systemctl` will not match; `/usr/bin/systemctl` will.
+
+### Never edit /etc/sudoers directly
+
+```bash
+sudo visudo                                  # edits /etc/sudoers WITH VALIDATION
+sudo visudo -f /etc/sudoers.d/alice          # edit a drop-in with validation
+sudo visudo -c                               # check syntax of everything
+```
+
+**A syntax error in `/etc/sudoers` breaks `sudo` for everyone, including you.** `visudo` validates before saving and refuses to install a broken file. There is no reason to use plain `vim` here.
+
+If you do get locked out, the recovery is `pkexec` if available, or single-user mode via `16-boot-interrupt-root-recovery.md`.
+
+### Prefer drop-in files
+
+`/etc/sudoers` includes `/etc/sudoers.d/` at the end. Drop-ins are the modern, update-safe way.
+
+```bash
+echo 'alice ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/alice
+sudo chmod 440 /etc/sudoers.d/alice
+sudo visudo -c
+```
+
+**Mode `440` matters.** `sudo` ignores files in `/etc/sudoers.d/` that are group- or world-writable, silently. If your rule seems to have no effect, check the permissions first.
+
+Also: files with a `.` or `~` in the name are ignored. Name it `alice`, not `alice.conf`.
+
+```bash
+ls -l /etc/sudoers.d/
+```
+
+### Testing sudo
+
+```bash
+sudo -l                            # what can I run
+sudo -l -U alice                   # what can ALICE run
+sudo -u alice command              # run as alice
+sudo -v                            # refresh the credential timestamp
+sudo -k                            # forget the cached credential
+```
+
+`sudo -l -U alice` is the correct way to verify a sudoers task without logging in as her.
+
+### PolicyKit, briefly
+
+Some graphical and systemd operations use PolicyKit rather than sudo. You are unlikely to be tested on writing rules, but recognise the tool:
+
+```bash
+pkexec command
 ```
 
 ## Exam Tips

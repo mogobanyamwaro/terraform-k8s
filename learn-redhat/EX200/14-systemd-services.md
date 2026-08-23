@@ -4,330 +4,326 @@
 
 This is the most-used command family on the exam, and `enable` versus `start` is the most common single point of failure. If you take one thing from this folder, take `systemctl enable --now`.
 
-## Concept Refresher
+## Before You Start
 
-### The one command that matters
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
+
+```bash
+vagrant ssh server1    # or ssh into your practice VM
+```
+
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+The grader reboots your machine. `start` alone scores zero — `enable --now` is the habit.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. The one command that matters
+
+```bash
+sudo dnf install -y httpd 2>/dev/null || true
+sudo systemctl enable --now httpd
+systemctl status httpd --no-pager | head -8
+```
+
+**You should see** `Loaded: ... enabled` and `Active: active (running)`.
+
+`enable` makes it start at boot. `--now` starts it immediately. **Doing both in one command is the habit that saves you.**
+
+### 2. Understand `start` versus `enable`
+
+```bash
+sudo systemctl stop httpd
+systemctl is-active httpd
+systemctl is-enabled httpd
+```
+
+**You should see** `inactive` but still `enabled`.
+
+`start` runs it now; `enable` configures boot. After a reboot, an enabled-but-stopped service comes back up. A started-but-disabled service does not.
+
+```bash
+sudo systemctl start httpd
+```
+
+### 3. Verify with short, unambiguous commands
+
+```bash
+systemctl is-active httpd
+systemctl is-enabled httpd
+```
+
+**You should see** `active` and `enabled`.
+
+Both must be right for a completed task. `systemctl status` shows both too, but `is-active` and `is-enabled` are scriptable and unambiguous.
+
+### 4. Stop and disable in one command
+
+```bash
+sudo systemctl disable --now httpd
+systemctl is-active httpd
+systemctl is-enabled httpd
+```
+
+**You should see** `inactive` and `disabled`.
+
+`--now` works with `disable` too — stopping the service as it disables it.
 
 ```bash
 sudo systemctl enable --now httpd
 ```
 
-`enable` makes it start at boot. `--now` starts it immediately. **Doing both in one command is the habit that saves you.**
+### 5. Mask versus disable
 
 ```bash
-sudo systemctl start httpd        # running NOW, gone after reboot
-sudo systemctl enable httpd       # starts at boot, NOT running now
-sudo systemctl enable --now httpd # both. Use this every time
+sudo systemctl mask httpd
+sudo systemctl start httpd
+ls -l /etc/systemd/system/httpd.service
+sudo systemctl unmask httpd
+sudo systemctl start httpd
 ```
 
-The grader reboots your machine. `start` alone scores zero.
+**You should see** `Unit httpd.service is masked`, then a symlink to `/dev/null`, then success after `unmask`.
 
-### Core verbs
+**`mask` makes a unit impossible to start** — even manually or as a dependency. `disable` only removes the boot symlink; the unit can still be started.
+
+### 6. List what will start at boot
 
 ```bash
-sudo systemctl start UNIT
-sudo systemctl stop UNIT
-sudo systemctl restart UNIT              # stop then start
-sudo systemctl reload UNIT               # re-read config WITHOUT dropping connections
-sudo systemctl reload-or-restart UNIT    # reload if supported, else restart
-sudo systemctl enable UNIT
-sudo systemctl disable UNIT
-sudo systemctl enable --now UNIT
-sudo systemctl disable --now UNIT
-sudo systemctl mask UNIT                 # make it IMPOSSIBLE to start
-sudo systemctl unmask UNIT
+systemctl list-unit-files --type=service --state=enabled | head -10
 ```
 
-**`restart` versus `reload`:** restart kills the process and starts a new one, dropping active connections. reload asks the running process to re-read its configuration. For a task like "apply the new configuration without interrupting clients", use `reload`.
+**You should see** a table of unit files with state `enabled`.
 
-**`mask` versus `disable`:**
+For "what will start at boot", use `list-unit-files --state=enabled`, not `list-units` (which shows currently loaded units).
 
-| | `disable` | `mask` |
-| --- | --- | --- |
-| Starts at boot | No | No |
-| Can be started manually | **Yes** | **No** |
-| Can be started as a dependency of another unit | **Yes** | **No** |
-| Mechanism | Removes the `.wants` symlink | Symlinks the unit to `/dev/null` |
-
-Use `mask` when a service must be completely prevented from running, for example when you replace `firewalld` with `nftables`, or when something else keeps pulling it in as a dependency. A masked unit shows as `masked` in `systemctl status`.
-
-### Querying
+### 7. Find failed units — run this after every reboot
 
 ```bash
-systemctl status httpd                   # full status with recent log lines
-systemctl status httpd --no-pager        # no pager, better for scripting
-systemctl is-active httpd                # active / inactive / failed
-systemctl is-enabled httpd               # enabled / disabled / masked / static
-systemctl is-failed httpd
-
-systemctl list-units                     # loaded units
-systemctl list-units --type=service
-systemctl list-units --all               # including inactive
-systemctl list-unit-files                # ALL installed units and their enablement
-systemctl list-unit-files --state=enabled
-systemctl list-units --failed            # what is broken
-systemctl --failed                       # shorthand
-systemctl list-dependencies httpd
-systemctl list-dependencies --reverse httpd
+systemctl --failed
 ```
+
+**You should see** either an empty list or units in `failed` state.
 
 **`systemctl --failed` is the first command to run after any reboot.** It tells you immediately what did not come up.
 
-Reading `systemctl status`:
-
-```text
-● httpd.service - The Apache HTTP Server
-     Loaded: loaded (/usr/lib/systemd/system/httpd.service; enabled; preset: disabled)
-                                                             │
-                                                             └─ ENABLED at boot?
-     Active: active (running) since Tue 2026-08-18 17:00:00 EAT; 5min ago
-             │
-             └─ running NOW?
-   Main PID: 1234 (httpd)
-```
-
-**Check both words.** `active (running)` and `enabled` must both be present for a completed task. `active (running); disabled` means you forgot `enable`.
-
-The `is-enabled` states worth knowing:
-
-| State | Meaning |
-| --- | --- |
-| `enabled` | Will start at boot |
-| `disabled` | Will not |
-| **`static`** | Has no `[Install]` section, so it **cannot be enabled**. It is pulled in by other units |
-| `masked` | Blocked entirely |
-| `indirect` | Enabled via an alias or another unit |
-
-If `systemctl enable X` says the unit is static, that is not an error — it means the unit is designed to be activated as a dependency, and there is nothing for you to do.
-
-### Unit types
-
-| Suffix | Purpose |
-| --- | --- |
-| **`.service`** | A daemon or process. The default if you omit the suffix |
-| `.socket` | Socket activation |
-| **`.target`** | A group of units, roughly like a runlevel. See `15-systemd-targets-boot.md` |
-| **`.timer`** | Scheduled activation. See `19-scheduling-cron-at.md` |
-| **`.mount`** | A filesystem mount, usually generated from `/etc/fstab` |
-| `.automount` | On-demand mounting |
-| `.swap` | A swap device |
-| `.path` | Activate on filesystem changes |
-| `.device` | A kernel device |
-
-`systemctl start httpd` and `systemctl start httpd.service` are identical; the suffix defaults to `.service`. For anything else you must be explicit: `systemctl start data.mount`.
-
-### Where unit files live
-
-```text
-/usr/lib/systemd/system/     Package-provided units. DO NOT EDIT
-/etc/systemd/system/         Your units and overrides. HIGHEST PRIORITY
-/run/systemd/system/         Runtime, transient
-~/.config/systemd/user/      Per-user units (rootless containers, see 35-containers-systemd.md)
-```
-
-**Precedence: `/etc` beats `/run` beats `/usr/lib`.** To change a packaged unit, never edit it in `/usr/lib` — your change would be lost on the next package update. Instead use a drop-in.
+### 8. Read a unit definition with `systemctl cat`
 
 ```bash
-systemctl cat httpd                      # show the unit AND all drop-ins, in order
-systemctl show httpd                     # every resolved property
-systemctl show -p ExecStart httpd        # one property
+systemctl cat sshd | head -20
 ```
 
-### Drop-in overrides
+**You should see** the packaged unit file with a path comment like `/usr/lib/systemd/system/sshd.service`.
 
-The correct way to modify a packaged unit.
+`systemctl cat` shows the unit **and** any drop-ins from `/etc/systemd/system/`, in precedence order.
 
-```bash
-sudo systemctl edit httpd               # opens a drop-in; creates the dir for you
-```
-
-That creates `/etc/systemd/system/httpd.service.d/override.conf`. Or write it yourself:
+### 9. Override a packaged unit with a drop-in
 
 ```bash
 sudo mkdir -p /etc/systemd/system/httpd.service.d
-sudo tee /etc/systemd/system/httpd.service.d/override.conf <<'EOF'
+sudo tee /etc/systemd/system/httpd.service.d/restart.conf <<'EOF'
 [Service]
 Restart=always
 RestartSec=5
 EOF
 sudo systemctl daemon-reload
 sudo systemctl restart httpd
+systemctl show -p Restart -p RestartSec httpd
 ```
 
-**`daemon-reload` is mandatory after touching any unit file.** Without it systemd keeps using the old definition and your change appears to have no effect.
+**You should see** `Restart=always` and `RestartSec=5s`.
 
-To replace the whole unit rather than add to it:
+**Never edit `/usr/lib/systemd/system/`.** Drop-ins in `/etc/systemd/system/<unit>.d/*.conf` survive package updates. **`daemon-reload` is mandatory** after touching any unit file.
+
+Or interactively:
 
 ```bash
-sudo systemctl edit --full httpd         # copies the unit to /etc for editing
+sudo systemctl edit httpd    # opens an editor, creates the directory
 ```
 
-One subtlety: for list-valued directives such as `ExecStart`, a drop-in **appends** rather than replaces. You must clear it first:
-
-```text
-[Service]
-ExecStart=
-ExecStart=/usr/sbin/httpd -D FOREGROUND -f /etc/httpd/conf/custom.conf
-```
-
-The empty assignment resets the list. Forgetting it gives you two `ExecStart` lines and a startup failure.
-
-### Writing a unit file
-
-You may be asked to create a service. The minimum viable unit:
+### 10. Reload versus restart
 
 ```bash
-sudo tee /etc/systemd/system/myapp.service <<'EOF'
+MAINPID=$(systemctl show -p MainPID --value sshd)
+sudo systemctl reload sshd
+systemctl show -p MainPID --value sshd
+echo "Before: $MAINPID"
+```
+
+**You should see** the same MainPID before and after reload.
+
+**`reload` re-reads config without dropping connections.** `restart` kills the process and starts a new one. For "apply configuration without interrupting clients", use `reload`.
+
+Check support first:
+
+```bash
+systemctl show -p CanReload --value sshd
+```
+
+### 11. Write a minimal unit file
+
+```bash
+sudo tee /usr/local/bin/hello.sh <<'EOF'
+#!/bin/bash
+echo "hello at $(date)" >> /var/log/hello.log
+EOF
+sudo chmod +x /usr/local/bin/hello.sh
+
+sudo tee /etc/systemd/system/hello.service <<'EOF'
 [Unit]
-Description=My Application
-After=network-online.target
-Wants=network-online.target
+Description=Hello logging service
+After=network.target
 
 [Service]
-Type=simple
-ExecStart=/usr/local/bin/myapp.sh
-Restart=on-failure
-RestartSec=5
-User=myapp
+Type=oneshot
+ExecStart=/usr/local/bin/hello.sh
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-sudo systemd-analyze verify /etc/systemd/system/myapp.service
+sudo systemd-analyze verify /etc/systemd/system/hello.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now myapp
+sudo systemctl enable --now hello
+systemctl status hello --no-pager
+sudo cat /var/log/hello.log
 ```
 
-**The `[Install]` section is what makes `enable` possible.** A unit without `WantedBy=` cannot be enabled — `systemctl enable` reports it as static and silently does nothing useful. This is a real trap when writing your own unit.
+**You should see** `active (exited)`, `enabled`, and a timestamp in the log.
 
-The `Type=` values:
+Four details that make this work: **`chmod +x`**, a **`#!/bin/bash` shebang**, **`Type=oneshot` with `RemainAfterExit=yes`**, and **`[Install]` with `WantedBy=multi-user.target`**. Without `[Install]`, `enable` cannot create the boot symlink.
 
-| Type | Use for |
-| --- | --- |
-| **`simple`** | The default. The process runs in the foreground and does not fork |
-| `forking` | Traditional daemons that fork and exit the parent. Needs `PIDFile=` |
-| **`oneshot`** | Runs, finishes, exits. Pair with `RemainAfterExit=yes` |
-| `notify` | The process signals readiness to systemd |
-| `dbus` | Ready when it takes a D-Bus name |
+### 12. Debug a failed service
 
-A `oneshot` unit is the right choice for a script that does something and exits, for instance a timer-driven backup:
+```bash
+sudo tee /etc/systemd/system/broken.service <<'EOF'
+[Unit]
+Description=Deliberately broken
 
-```text
 [Service]
-Type=oneshot
-ExecStart=/usr/local/bin/backup.sh
+ExecStart=/usr/local/bin/nosuchscript.sh
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl start broken
+systemctl status broken --no-pager
+journalctl -xeu broken --no-pager | tail -15
 ```
 
-Useful `[Service]` directives:
-
-```text
-ExecStartPre=       run before ExecStart
-ExecStartPost=      run after
-ExecStop=           custom stop command
-ExecReload=         what `systemctl reload` runs
-Restart=            no | on-failure | on-abort | always
-RestartSec=5
-User=  Group=       run as an unprivileged account
-WorkingDirectory=
-Environment="KEY=value"
-EnvironmentFile=/etc/sysconfig/myapp
-Nice=10
-TimeoutStartSec=90
-```
-
-Ordering in `[Unit]`:
-
-```text
-After=x.target      start after x  (ordering only)
-Before=y.service    start before y (ordering only)
-Requires=z.service  HARD dependency: if z fails, this fails
-Wants=z.service     SOFT dependency: start z, but continue if it fails
-Conflicts=w.service cannot run at the same time as w
-```
-
-**`After=` is ordering; `Requires=` is dependency.** They are independent — you usually want both:
-
-```text
-Requires=network-online.target
-After=network-online.target
-```
-
-`Requires` without `After` starts them in parallel, which is rarely what you mean.
-
-### Analysing boot and units
-
-```bash
-systemd-analyze                          # total boot time
-systemd-analyze blame                    # slowest units
-systemd-analyze critical-chain           # the critical path
-systemd-analyze verify unit.service      # validate a unit file
-systemctl list-dependencies multi-user.target
-```
-
-`systemd-analyze verify` catches typos before you waste time on a failed start.
-
-### Debugging a failed service
-
-The method, in order:
-
-```bash
-systemctl status myapp -l --no-pager     # the summary and last few log lines
-journalctl -xeu myapp                    # full log with explanations
-journalctl -u myapp -b                   # this boot only
-journalctl -u myapp --since "10 min ago"
-systemctl cat myapp                      # is the unit what you think it is?
-systemd-analyze verify /etc/systemd/system/myapp.service
-sudo -u myapp /usr/local/bin/myapp.sh    # run it by hand as the service user
-ls -lZ /usr/local/bin/myapp.sh           # SELinux context and exec permission
-```
+**You should see** `failed (Result: exit-code)` and status **203/EXEC** — systemd could not execute the file.
 
 **`journalctl -xeu UNIT` is the single most useful debugging command.** `-x` adds explanatory text, `-e` jumps to the end, `-u` filters by unit.
 
-The recurring causes of a service that will not start:
+Clean up:
 
-| Cause | Symptom |
+```bash
+sudo systemctl disable --now broken 2>/dev/null
+sudo rm -f /etc/systemd/system/broken.service
+sudo systemctl daemon-reload
+```
+
+### 13. Analyse boot time
+
+```bash
+systemd-analyze
+systemd-analyze blame | head -5
+```
+
+**You should see** total boot time and the slowest units listed longest-first.
+
+`critical-chain` shows the dependency path that actually determined total boot time — more useful than blame alone for a slow unit nothing waits for.
+
+### Mini checkpoint
+
+Before the practice tasks, you should be able to explain:
+
+| Command | Does |
 | --- | --- |
-| Script not executable | `Permission denied`, status 203 |
-| Wrong path in `ExecStart` | `No such file or directory`, status 203 |
-| Missing `#!/bin/bash` shebang | `Exec format error` |
-| **SELinux context wrong on the binary** | `Permission denied` with an AVC in `ausearch` |
-| Port already in use | `Address already in use` |
-| **SELinux port not labelled** | `Permission denied` on bind |
-| Config syntax error | Service-specific error in the journal |
-| Forgot `daemon-reload` | Your change appears to be ignored |
+| `enable --now` | Starts now **and** at boot |
+| `disable --now` | Stops now **and** prevents boot start |
+| `mask` | Blocks start entirely — symlink to `/dev/null` |
+| `daemon-reload` | Required after editing any unit file |
+| `reload` | Re-read config, keep PID |
+| `restart` | New process, new PID |
 
-## Tasks
+If any row is blank in your head, re-run the step above that covers it.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Install the Apache web server, start it, and configure it to start automatically at boot, in as few commands as possible.
 
+> Hint: `dnf install -y httpd` then `systemctl enable --now httpd`.
+
 **Task 2.** Verify both that httpd is running now and that it will start at boot, using two short commands.
+
+> Hint: `is-active` and `is-enabled` — follow-along step 3.
 
 **Task 3.** Stop httpd and prevent it from starting at boot, in a single command.
 
+> Hint: `disable --now`.
+
 **Task 4.** Prevent `httpd` from being started at all, even manually or as a dependency of another unit. Then demonstrate that it cannot be started, and reverse it.
+
+> Hint: `mask`, attempt `start`, then `unmask` — follow-along step 5.
 
 **Task 5.** List every service that is enabled to start at boot.
 
+> Hint: `list-unit-files --state=enabled`.
+
 **Task 6.** Show all units that have failed.
+
+> Hint: `systemctl --failed`.
 
 **Task 7.** Display the full unit definition for `sshd`, including any overrides.
 
+> Hint: `systemctl cat sshd`.
+
 **Task 8.** Configure `httpd` so that systemd automatically restarts it if it crashes, waiting 5 seconds between attempts. Do this without editing the packaged unit file.
+
+> Hint: drop-in at `/etc/systemd/system/httpd.service.d/` — follow-along step 9.
 
 **Task 9.** Prove your override in Task 8 is in effect.
 
+> Hint: `systemctl show -p Restart` or kill the main PID and watch it come back.
+
 **Task 10.** Create a systemd service called `hello.service` that runs `/usr/local/bin/hello.sh`, writing a timestamp to `/var/log/hello.log` every time it starts. Enable it so it runs at boot, then verify it worked after a reboot.
+
+> Hint: follow-along step 11 — oneshot, RemainAfterExit, WantedBy, chmod +x, shebang.
 
 **Task 11.** Reload the `sshd` configuration without dropping existing connections.
 
+> Hint: `systemctl reload sshd`; confirm MainPID unchanged.
+
 **Task 12.** Determine which services took the longest to start during the last boot.
+
+> Hint: `systemd-analyze blame`.
 
 **Task 13.** A service called `broken.service` fails to start. Create it deliberately broken, then diagnose and fix it.
 
+> Hint: follow-along step 12 — status 203/EXEC and `journalctl -xeu`.
+
 **Task 14.** Show every unit that `multi-user.target` depends on.
 
+> Hint: `systemctl list-dependencies multi-user.target`.
+
 **Task 15.** Determine whether `chronyd` is enabled, active, and if it would restart automatically on failure.
+
+> Hint: `systemctl show chronyd -p UnitFileState -p ActiveState -p Restart`.
 
 ---
 
@@ -766,6 +762,301 @@ systemctl is-active httpd
 systemctl is-enabled httpd
 journalctl -p err -b               # errors this boot
 ```
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### The one command that matters
+
+```bash
+sudo systemctl enable --now httpd
+```
+
+`enable` makes it start at boot. `--now` starts it immediately. **Doing both in one command is the habit that saves you.**
+
+```bash
+sudo systemctl start httpd        # running NOW, gone after reboot
+sudo systemctl enable httpd       # starts at boot, NOT running now
+sudo systemctl enable --now httpd # both. Use this every time
+```
+
+The grader reboots your machine. `start` alone scores zero.
+
+### Core verbs
+
+```bash
+sudo systemctl start UNIT
+sudo systemctl stop UNIT
+sudo systemctl restart UNIT              # stop then start
+sudo systemctl reload UNIT               # re-read config WITHOUT dropping connections
+sudo systemctl reload-or-restart UNIT    # reload if supported, else restart
+sudo systemctl enable UNIT
+sudo systemctl disable UNIT
+sudo systemctl enable --now UNIT
+sudo systemctl disable --now UNIT
+sudo systemctl mask UNIT                 # make it IMPOSSIBLE to start
+sudo systemctl unmask UNIT
+```
+
+**`restart` versus `reload`:** restart kills the process and starts a new one, dropping active connections. reload asks the running process to re-read its configuration. For a task like "apply the new configuration without interrupting clients", use `reload`.
+
+**`mask` versus `disable`:**
+
+| | `disable` | `mask` |
+| --- | --- | --- |
+| Starts at boot | No | No |
+| Can be started manually | **Yes** | **No** |
+| Can be started as a dependency of another unit | **Yes** | **No** |
+| Mechanism | Removes the `.wants` symlink | Symlinks the unit to `/dev/null` |
+
+Use `mask` when a service must be completely prevented from running, for example when you replace `firewalld` with `nftables`, or when something else keeps pulling it in as a dependency. A masked unit shows as `masked` in `systemctl status`.
+
+### Querying
+
+```bash
+systemctl status httpd                   # full status with recent log lines
+systemctl status httpd --no-pager        # no pager, better for scripting
+systemctl is-active httpd                # active / inactive / failed
+systemctl is-enabled httpd               # enabled / disabled / masked / static
+systemctl is-failed httpd
+
+systemctl list-units                     # loaded units
+systemctl list-units --type=service
+systemctl list-units --all               # including inactive
+systemctl list-unit-files                # ALL installed units and their enablement
+systemctl list-unit-files --state=enabled
+systemctl list-units --failed            # what is broken
+systemctl --failed                       # shorthand
+systemctl list-dependencies httpd
+systemctl list-dependencies --reverse httpd
+```
+
+**`systemctl --failed` is the first command to run after any reboot.** It tells you immediately what did not come up.
+
+Reading `systemctl status`:
+
+```text
+● httpd.service - The Apache HTTP Server
+     Loaded: loaded (/usr/lib/systemd/system/httpd.service; enabled; preset: disabled)
+                                                             │
+                                                             └─ ENABLED at boot?
+     Active: active (running) since Tue 2026-08-18 17:00:00 EAT; 5min ago
+             │
+             └─ running NOW?
+   Main PID: 1234 (httpd)
+```
+
+**Check both words.** `active (running)` and `enabled` must both be present for a completed task. `active (running); disabled` means you forgot `enable`.
+
+The `is-enabled` states worth knowing:
+
+| State | Meaning |
+| --- | --- |
+| `enabled` | Will start at boot |
+| `disabled` | Will not |
+| **`static`** | Has no `[Install]` section, so it **cannot be enabled**. It is pulled in by other units |
+| `masked` | Blocked entirely |
+| `indirect` | Enabled via an alias or another unit |
+
+If `systemctl enable X` says the unit is static, that is not an error — it means the unit is designed to be activated as a dependency, and there is nothing for you to do.
+
+### Unit types
+
+| Suffix | Purpose |
+| --- | --- |
+| **`.service`** | A daemon or process. The default if you omit the suffix |
+| `.socket` | Socket activation |
+| **`.target`** | A group of units, roughly like a runlevel. See `15-systemd-targets-boot.md` |
+| **`.timer`** | Scheduled activation. See `19-scheduling-cron-at.md` |
+| **`.mount`** | A filesystem mount, usually generated from `/etc/fstab` |
+| `.automount` | On-demand mounting |
+| `.swap` | A swap device |
+| `.path` | Activate on filesystem changes |
+| `.device` | A kernel device |
+
+`systemctl start httpd` and `systemctl start httpd.service` are identical; the suffix defaults to `.service`. For anything else you must be explicit: `systemctl start data.mount`.
+
+### Where unit files live
+
+```text
+/usr/lib/systemd/system/     Package-provided units. DO NOT EDIT
+/etc/systemd/system/         Your units and overrides. HIGHEST PRIORITY
+/run/systemd/system/         Runtime, transient
+~/.config/systemd/user/      Per-user units (rootless containers, see 35-containers-systemd.md)
+```
+
+**Precedence: `/etc` beats `/run` beats `/usr/lib`.** To change a packaged unit, never edit it in `/usr/lib` — your change would be lost on the next package update. Instead use a drop-in.
+
+```bash
+systemctl cat httpd                      # show the unit AND all drop-ins, in order
+systemctl show httpd                     # every resolved property
+systemctl show -p ExecStart httpd        # one property
+```
+
+### Drop-in overrides
+
+The correct way to modify a packaged unit.
+
+```bash
+sudo systemctl edit httpd               # opens a drop-in; creates the dir for you
+```
+
+That creates `/etc/systemd/system/httpd.service.d/override.conf`. Or write it yourself:
+
+```bash
+sudo mkdir -p /etc/systemd/system/httpd.service.d
+sudo tee /etc/systemd/system/httpd.service.d/override.conf <<'EOF'
+[Service]
+Restart=always
+RestartSec=5
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart httpd
+```
+
+**`daemon-reload` is mandatory after touching any unit file.** Without it systemd keeps using the old definition and your change appears to have no effect.
+
+To replace the whole unit rather than add to it:
+
+```bash
+sudo systemctl edit --full httpd         # copies the unit to /etc for editing
+```
+
+One subtlety: for list-valued directives such as `ExecStart`, a drop-in **appends** rather than replaces. You must clear it first:
+
+```text
+[Service]
+ExecStart=
+ExecStart=/usr/sbin/httpd -D FOREGROUND -f /etc/httpd/conf/custom.conf
+```
+
+The empty assignment resets the list. Forgetting it gives you two `ExecStart` lines and a startup failure.
+
+### Writing a unit file
+
+You may be asked to create a service. The minimum viable unit:
+
+```bash
+sudo tee /etc/systemd/system/myapp.service <<'EOF'
+[Unit]
+Description=My Application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/myapp.sh
+Restart=on-failure
+RestartSec=5
+User=myapp
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemd-analyze verify /etc/systemd/system/myapp.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now myapp
+```
+
+**The `[Install]` section is what makes `enable` possible.** A unit without `WantedBy=` cannot be enabled — `systemctl enable` reports it as static and silently does nothing useful. This is a real trap when writing your own unit.
+
+The `Type=` values:
+
+| Type | Use for |
+| --- | --- |
+| **`simple`** | The default. The process runs in the foreground and does not fork |
+| `forking` | Traditional daemons that fork and exit the parent. Needs `PIDFile=` |
+| **`oneshot`** | Runs, finishes, exits. Pair with `RemainAfterExit=yes` |
+| `notify` | The process signals readiness to systemd |
+| `dbus` | Ready when it takes a D-Bus name |
+
+A `oneshot` unit is the right choice for a script that does something and exits, for instance a timer-driven backup:
+
+```text
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup.sh
+```
+
+Useful `[Service]` directives:
+
+```text
+ExecStartPre=       run before ExecStart
+ExecStartPost=      run after
+ExecStop=           custom stop command
+ExecReload=         what `systemctl reload` runs
+Restart=            no | on-failure | on-abort | always
+RestartSec=5
+User=  Group=       run as an unprivileged account
+WorkingDirectory=
+Environment="KEY=value"
+EnvironmentFile=/etc/sysconfig/myapp
+Nice=10
+TimeoutStartSec=90
+```
+
+Ordering in `[Unit]`:
+
+```text
+After=x.target      start after x  (ordering only)
+Before=y.service    start before y (ordering only)
+Requires=z.service  HARD dependency: if z fails, this fails
+Wants=z.service     SOFT dependency: start z, but continue if it fails
+Conflicts=w.service cannot run at the same time as w
+```
+
+**`After=` is ordering; `Requires=` is dependency.** They are independent — you usually want both:
+
+```text
+Requires=network-online.target
+After=network-online.target
+```
+
+`Requires` without `After` starts them in parallel, which is rarely what you mean.
+
+### Analysing boot and units
+
+```bash
+systemd-analyze                          # total boot time
+systemd-analyze blame                    # slowest units
+systemd-analyze critical-chain           # the critical path
+systemd-analyze verify unit.service      # validate a unit file
+systemctl list-dependencies multi-user.target
+```
+
+`systemd-analyze verify` catches typos before you waste time on a failed start.
+
+### Debugging a failed service
+
+The method, in order:
+
+```bash
+systemctl status myapp -l --no-pager     # the summary and last few log lines
+journalctl -xeu myapp                    # full log with explanations
+journalctl -u myapp -b                   # this boot only
+journalctl -u myapp --since "10 min ago"
+systemctl cat myapp                      # is the unit what you think it is?
+systemd-analyze verify /etc/systemd/system/myapp.service
+sudo -u myapp /usr/local/bin/myapp.sh    # run it by hand as the service user
+ls -lZ /usr/local/bin/myapp.sh           # SELinux context and exec permission
+```
+
+**`journalctl -xeu UNIT` is the single most useful debugging command.** `-x` adds explanatory text, `-e` jumps to the end, `-u` filters by unit.
+
+The recurring causes of a service that will not start:
+
+| Cause | Symptom |
+| --- | --- |
+| Script not executable | `Permission denied`, status 203 |
+| Wrong path in `ExecStart` | `No such file or directory`, status 203 |
+| Missing `#!/bin/bash` shebang | `Exec format error` |
+| **SELinux context wrong on the binary** | `Permission denied` with an AVC in `ausearch` |
+| Port already in use | `Address already in use` |
+| **SELinux port not labelled** | `Permission denied` on bind |
+| Config syntax error | Service-specific error in the journal |
+| Forgot `daemon-reload` | Your change appears to be ignored |
 
 ## Exam Tips
 

@@ -4,419 +4,231 @@
 
 **This file contains the single most important thing on the exam: `/etc/fstab`.** A wrong entry here does not just fail a task, it stops the machine booting — and the exam is graded after a reboot.
 
-## Concept Refresher
+## Before You Start
 
-### Filesystem types
-
-| Type | Default for | Grow | Shrink | Notes |
-| --- | --- | --- | --- | --- |
-| **XFS** | **RHEL default** | **Yes, mounted** | **NEVER** | `mkfs.xfs`, `xfs_growfs`, `xfs_repair` |
-| **ext4** | Widely used | Yes | **Yes, unmounted** | `mkfs.ext4`, `resize2fs`, `fsck.ext4` |
-| **vfat** | USB, EFI | Yes | No | `mkfs.vfat`, no permissions or ownership |
-| ext3, ext2 | Legacy | Yes | Yes | Rare |
-| swap | Swap | — | — | `mkswap`, see `31-swap.md` |
-| iso9660 | Optical, ISO | — | — | Read-only |
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
-sudo mkfs.xfs /dev/sdb1
-sudo mkfs.ext4 /dev/sdb1
-sudo mkfs.vfat /dev/sdb1
-sudo mkfs -t xfs /dev/sdb1
-sudo mkfs.xfs -f /dev/sdb1                 # -f forces over an existing filesystem
-sudo mkfs.xfs -L mydata /dev/sdb1          # with a label
-sudo mkfs.ext4 -L mydata /dev/sdb1
-sudo mkfs.vfat -n MYDATA /dev/sdb1         # vfat uses -n, and UPPERCASE labels
+vagrant ssh server1    # or ssh into your practice VM
 ```
 
-**Note the label flags differ: `-L` for XFS and ext4, `-n` for vfat.**
+**Storage lessons need spare disks.** Your `server1` VM must have the three extra 2 GB disks described in `Lab-Setup.md`. Run `lsblk` — you should see unused disks (`sdb`, `sdc`, `sdd`) with no partitions and no mountpoints. **Never partition `/dev/sda` or `/dev/vda`** unless a task explicitly says so; it holds your OS.
 
-**`mkfs` destroys everything on the device.** There is no confirmation for a blank device, and only a warning for one with an existing signature.
+**How to use this file:**
 
-The three the objective names are XFS, ext4, and vfat, so know all three. RHEL 10 may need a package for vfat:
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
 
-```bash
-sudo dnf install -y dosfstools          # mkfs.vfat
-sudo dnf install -y e2fsprogs xfsprogs
-```
+---
 
-### Mounting
+## Follow Along
 
-```bash
-sudo mount /dev/sdb1 /data
-sudo mount UUID=4b2c9e1f-... /data
-sudo mount LABEL=mydata /data
-sudo mount -t xfs /dev/sdb1 /data
-sudo mount -o ro /dev/sdb1 /data
-sudo mount -o remount,rw /data
-sudo mount -a                              # everything in /etc/fstab
-sudo mount /data                           # if /data is in /etc/fstab
+Work on **server1** with a spare partition or LV. After each step, compare your output to **You should see**.
 
-sudo umount /data
-sudo umount /dev/sdb1
-sudo umount -l /data                       # lazy
-sudo umount -f /data                       # force (NFS)
-```
-
-**The mount point must exist first:**
+### 1. List mounted filesystems three ways
 
 ```bash
-sudo mkdir -p /data
-```
-
-Inspecting mounts:
-
-```bash
-mount                                      # everything, verbose
-findmnt                                    # tree view — much better
-findmnt /data
-findmnt -no SOURCE,FSTYPE /data
-findmnt --verify                           # VALIDATE /etc/fstab
 df -hT
-df -i                                      # inode usage
-cat /proc/mounts
+findmnt --real
 lsblk -f
 ```
 
-```text
-$ findmnt /data
-TARGET SOURCE    FSTYPE OPTIONS
-/data  /dev/sdb1 xfs    rw,relatime,seclabel,attr2,inode64
-```
+**You should see** type, size, and mount point for `/`, `/boot`, and any data mounts. **`findmnt --verify` validates `/etc/fstab` — nothing else does.**
 
-**`findmnt` is better than `mount`** — it is a readable tree, it filters, and **`findmnt --verify` validates `/etc/fstab`**, which no other tool does.
-
-### /etc/fstab
-
-Six whitespace-separated fields:
-
-```text
-UUID=4b2c9e1f-3a8d-4e7f-9c1b-2d5a8f3e6b9c  /data  xfs  defaults  0 0
-              1                              2      3      4     5 6
-```
-
-| # | Field | Purpose | Common values |
-| --- | --- | --- | --- |
-| **1** | **Device** | What to mount | **`UUID=...`**, `LABEL=...`, `/dev/vg/lv` |
-| **2** | **Mount point** | Where | `/data`, `none` for swap |
-| **3** | **Type** | Filesystem | `xfs`, `ext4`, `vfat`, `swap`, `nfs`, `auto` |
-| **4** | **Options** | How | **`defaults`**, `noauto`, `nofail`, `ro`, `_netdev` |
-| 5 | Dump | Backup flag, obsolete | **`0`** |
-| 6 | fsck order | Boot-time check | **`0`** for XFS, `1` for `/`, `2` for others |
+### 2. Create XFS and mount temporarily
 
 ```bash
-cat /etc/fstab
-grep -v '^#' /etc/fstab | grep -v '^$'
-```
-
-```text
-UUID=4b2c9e1f-...  /                       xfs   defaults        0 0
-UUID=8f3a1c2d-...  /boot                   xfs   defaults        0 0
-UUID=7d5e3a8b-...  none                    swap  defaults        0 0
-UUID=a1b2c3d4-...  /data                   xfs   defaults        0 0
-```
-
-**Fields 5 and 6 are `0 0` for everything you will add.** XFS does its own journal recovery and ignores field 6 entirely.
-
-### Why UUID and not /dev/sdb1
-
-```bash
-sudo blkid
-sudo blkid /dev/sdb1
-sudo blkid -s UUID -o value /dev/sdb1
-lsblk -f
-```
-
-**Device names depend on detection order.** Add a disk, change a controller, or boot with a USB stick inserted, and today's `/dev/sdb` becomes tomorrow's `/dev/sdc`. The `/etc/fstab` entry then mounts the wrong filesystem or fails — and a failure at boot means emergency mode.
-
-**A UUID belongs to the filesystem and never changes** unless you re-run `mkfs`.
-
-| Identifier | Stable across | Use in fstab |
-| --- | --- | --- |
-| `/dev/sdb1` | Nothing reliable | **Avoid** |
-| **`UUID=...`** | **Everything except `mkfs`** | **Preferred** |
-| `LABEL=...` | Everything except `mkfs`/relabel | Acceptable |
-| `/dev/vg/lv` | Everything except renaming | Acceptable for LVM |
-
-**The objective explicitly says "by UUID or label", so this is graded.** Write the line without transcribing anything:
-
-```bash
-echo "UUID=$(sudo blkid -s UUID -o value /dev/sdb1)  /data  xfs  defaults  0 0" | sudo tee -a /etc/fstab
-```
-
-**That one-liner eliminates the mistyped-UUID failure mode**, which is one of the most common ways to end up in emergency mode.
-
-Labels:
-
-```bash
-sudo xfs_admin -L mydata /dev/sdb1         # XFS — must be UNMOUNTED
-sudo xfs_admin -l /dev/sdb1                # read the label
-sudo e2label /dev/sdb1 mydata              # ext4
-sudo e2label /dev/sdb1
-sudo fatlabel /dev/sdb1 MYDATA             # vfat
-lsblk -f
-```
-
-### Mount options
-
-| Option | Effect |
-| --- | --- |
-| **`defaults`** | `rw,suid,dev,exec,auto,nouser,async` |
-| `ro` / `rw` | Read-only / read-write |
-| `noexec` | Forbid executing binaries |
-| `nosuid` | Ignore SUID bits |
-| `nodev` | Ignore device files |
-| **`noauto`** | **Do NOT mount at boot or with `mount -a`** |
-| **`nofail`** | **Do not fail the boot if the device is missing** |
-| `_netdev` | Wait for the network — **required for NFS and iSCSI** |
-| `user` | Allow any user to mount |
-| `acl` | Enable POSIX ACLs (default on XFS) |
-| `usrquota`, `grpquota` | Enable quotas |
-| `x-systemd.automount` | Mount on first access |
-| `noatime`, `relatime` | Reduce access-time writes |
-| `uid=`, `gid=`, `dmask=`, `fmask=` | **vfat ownership and permissions** |
-
-Combine with commas, no spaces:
-
-```text
-UUID=xxx  /data  xfs   defaults,nofail          0 0
-UUID=xxx  /data  ext4  defaults,noexec,nosuid   0 0
-UUID=xxx  /usb   vfat  defaults,uid=1000,gid=1000 0 0
-server:/export /nfs nfs defaults,_netdev        0 0
-```
-
-**`nofail` is a safety net worth using on every non-critical mount.** With `nofail`, a missing device is skipped and the boot continues; without it, the boot stops in emergency mode. Use it for data mounts, removable media, and anything you are experimenting with.
-
-**But read the task.** If it says "mount at boot", the entry must actually mount — `noauto` would fail the task, whereas `nofail` still mounts when the device is present.
-
-### The verification ritual
-
-**Run these two commands after every `/etc/fstab` change, without exception:**
-
-```bash
-sudo findmnt --verify
-sudo mount -a
-```
-
-```text
-$ sudo findmnt --verify
-Success, no errors or warnings detected
-```
-
-`findmnt --verify` catches syntax errors, unknown filesystem types, missing mount points, and unresolvable UUIDs. `mount -a` proves every entry actually mounts.
-
-```text
-$ sudo findmnt --verify
-/data: unreachable source: UUID=wrong-uuid-here
-```
-
-**If either fails, do not reboot.** Fix `/etc/fstab` first. This is the highest-value habit on the entire exam.
-
-A fuller test:
-
-```bash
-sudo umount /data
-sudo mount -a
-findmnt /data
-df -hT /data
-```
-
-**Unmounting first and then `mount -a` proves the fstab line works**, rather than merely that your earlier manual mount is still in place.
-
-### Recovering from a bad fstab
-
-If you do reboot with a broken `/etc/fstab`:
-
-```text
-[FAILED] Failed to mount /data.
-[DEPEND] Dependency failed for Local File Systems.
-Give root password for maintenance:
-(or press Control-D to continue)
-```
-
-```bash
-# Enter the root password, then:
-mount -o remount,rw /            # the root fs is READ-ONLY in emergency mode
-vim /etc/fstab                   # fix or comment out the bad line
-findmnt --verify
-mount -a
-reboot
-```
-
-**`mount -o remount,rw /` first.** In emergency mode `/` is read-only, so `vim` cannot save and people panic. See `15-systemd-targets-boot.md` and `16-boot-interrupt-root-recovery.md`.
-
-### Growing a filesystem
-
-```bash
-# XFS — the MOUNT POINT, and it must be mounted
-sudo xfs_growfs /data
-sudo xfs_growfs -D 1000000 /data           # to a specific block count
-
-# ext4 — the DEVICE, mounted or not
-sudo resize2fs /dev/sdb1
-sudo resize2fs /dev/sdb1 2G
-
-# LVM does both at once
-sudo lvextend -r -L +500M /dev/vg01/lv01
-```
-
-| | XFS | ext4 |
-| --- | --- | --- |
-| Grow | **`xfs_growfs MOUNTPOINT`** | `resize2fs DEVICE` |
-| Must be mounted to grow | **Yes** | No |
-| Shrink | **Impossible** | Yes, unmounted, after `e2fsck -f` |
-
-**The argument type is the thing people get wrong**: `xfs_growfs` takes a mount point, `resize2fs` takes a device.
-
-### Checking and repairing
-
-```bash
-# ext4 — MUST be unmounted
-sudo umount /data
-sudo e2fsck -f /dev/sdb1
-sudo fsck /dev/sdb1
-sudo fsck -y /dev/sdb1
-
-# XFS — MUST be unmounted
-sudo umount /data
-sudo xfs_repair /dev/sdb1
-sudo xfs_repair -n /dev/sdb1               # -n = check only, change nothing
-sudo xfs_info /data                        # info on a MOUNTED xfs
-sudo xfs_db -c frag -r /dev/sdb1
-```
-
-**Never fsck or xfs_repair a mounted filesystem** — it corrupts it. Unmount first, always.
-
-### Space and inodes
-
-```bash
-df -h
-df -hT
-df -i                                      # INODES
-du -sh /data
-du -sh /data/* | sort -h
-du -h --max-depth=1 /var | sort -h
-sudo du -sh /var/log
-```
-
-**"No space left on device" with `df -h` showing free space means inode exhaustion.** Check `df -i`:
-
-```text
-$ df -i /data
-Filesystem                Inodes  IUsed  IFree IUse% Mounted on
-/dev/sdb1                 524288 524288      0  100% /data
-```
-
-Millions of tiny files do this. XFS allocates inodes dynamically and is largely immune; ext4 fixes the count at `mkfs` time.
-
-### Automatic mounting on access
-
-```text
-UUID=xxx  /data  xfs  defaults,x-systemd.automount,x-systemd.idle-timeout=60  0 0
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart local-fs.target
-```
-
-The filesystem is mounted on first access and unmounted after the idle timeout. **Useful for slow or removable devices.** For NFS this is usually done with autofs instead — see `32-nfs-autofs.md`.
-
-### SELinux and mounting
-
-```bash
-ls -Zd /data
-sudo restorecon -Rv /data
-```
-
-**A newly created filesystem mounted on a new directory gets a default context that may be wrong for a service.** If the mount is going to hold web content or similar:
-
-```bash
-sudo semanage fcontext -a -t httpd_sys_content_t "/data(/.*)?"
-sudo restorecon -Rv /data
-```
-
-**A `mount` can also hide the context of the underlying directory.** After mounting, `ls -Zd /data` shows the mounted filesystem's root, not the original directory. See `27-selinux.md`.
-
-### The full workflow
-
-```bash
-# 1. Identify (28-disks-partitions.md)
 lsblk
-
-# 2. Partition (28-disks-partitions.md)
-sudo fdisk /dev/sdb          # n, Enter, Enter, +1G, w
-sudo partprobe /dev/sdb
-
-# 3. Filesystem
 sudo mkfs.xfs /dev/sdb1
-
-# 4. Mount point
 sudo mkdir -p /data
-
-# 5. Test mount
 sudo mount /dev/sdb1 /data
 df -hT /data
+findmnt /data
+```
 
-# 6. PERSIST
-sudo blkid /dev/sdb1
+**You should see** `xfs` and about 1 GiB usable (metadata reduces reported size). **Manual `mount` is lost at reboot.**
+
+### 3. Persist with UUID
+
+```bash
 echo "UUID=$(sudo blkid -s UUID -o value /dev/sdb1)  /data  xfs  defaults  0 0" | sudo tee -a /etc/fstab
-
-# 7. VERIFY — never skip
 sudo findmnt --verify
 sudo umount /data
 sudo mount -a
 df -hT /data
-
-# 8. Prove it
-sudo reboot
-df -hT /data
 ```
 
-**Steps 6 and 7 are where the marks are.**
+**You should see** verify success and `/data` back after `mount -a`. **Generate the UUID — do not type it by hand.**
 
-## Tasks
+### 4. Create ext4 with a label
+
+```bash
+sudo mkfs.ext4 -L archive /dev/sdb2
+sudo mkdir -p /archive
+sudo mount LABEL=archive /archive
+lsblk -f /dev/sdb2
+```
+
+**You should see** `archive` in the LABEL column. **`LABEL=` in fstab is acceptable; UUID is safer against duplicates.**
+
+### 5. Create vfat with ownership at mount time
+
+```bash
+sudo dnf install -y dosfstools
+sudo mkfs.vfat -n REMOVABLE /dev/sdb3
+sudo mkdir -p /removable
+id
+sudo mount -o uid=$(id -u),gid=$(id -g),umask=022 /dev/sdb3 /removable
+ls -ld /removable
+```
+
+**You should see** your user as owner. **vfat has no Unix permissions — set uid/gid in mount options.**
+
+### 6. Add noauto and nofail options
+
+```bash
+grep data /etc/fstab
+```
+
+Add `,noauto` for manual-only mounts; add `,nofail` so a missing device does not break boot. **nofail still mounts when present; noauto never mounts at boot.**
+
+### 7. Remount read-write in emergency mode practice
+
+```bash
+sudo mount -o remount,ro /data
+findmnt /data
+sudo mount -o remount,rw /data
+findmnt /data
+```
+
+**You should see** options change without unmounting. **`mount -o remount,rw /` is the first command in emergency mode.**
+
+### 8. Grow XFS after enlarging the device
+
+```bash
+sudo xfs_growfs /data
+df -h /data
+```
+
+**You should see** usable size increase. **XFS takes the mount point and must be mounted; ext4 uses `resize2fs` on the device.**
+
+### 9. Catch a bad fstab entry before reboot
+
+```bash
+sudo cp /etc/fstab /root/fstab.bak
+echo "UUID=00000000-0000-0000-0000-000000000000  /broken  xfs  defaults  0 0" | sudo tee -a /etc/fstab
+sudo findmnt --verify
+sudo mount -a
+sudo sed -i '/broken/d' /etc/fstab
+```
+
+**You should see** verify and mount -a report unreachable source **before** any reboot.
+
+### 10. Check inodes when space looks free
+
+```bash
+df -h /data
+df -i /data
+```
+
+**You should see** block and inode usage. **`IUse% 100` with free blocks means inode exhaustion.**
+
+### Mini checkpoint
+
+After **every** fstab edit: **`sudo findmnt --verify`** then **`sudo mount -a`**. If either fails, **do not reboot**.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Report every mounted filesystem with its type, size, usage, and mount point, using three different commands.
 
+> Hint: df -hT, findmnt, lsblk -f — three different views of mounts.
+
 **Task 2.** Create an XFS filesystem on a 1 GiB partition, mount it at `/data`, and confirm the type and size.
+
+> Hint: mkfs.xfs, mkdir -p, mount, df -hT, findmnt.
 
 **Task 3.** Make that mount persistent using the UUID, then verify it without rebooting.
 
+> Hint: UUID= one-liner with blkid -s UUID -o value; verify, umount, mount -a.
+
 **Task 4.** Verify the mount survives a reboot.
+
+> Hint: reboot, df -hT /data, findmnt /data.
 
 **Task 5.** Create an ext4 filesystem with the label `archive`, mount it at `/archive` by label, and make it persistent by label.
 
+> Hint: mkfs.ext4 -L archive; persist with LABEL=archive; field 6 can be 2 for ext4.
+
 **Task 6.** Create a vfat filesystem on a partition, mount it at `/removable`, and make it writable by the user `alice`.
+
+> Hint: uid=, gid=, umask= on vfat; numeric IDs in fstab.
 
 **Task 7.** Add a mount that is defined in `/etc/fstab` but not mounted automatically at boot, then mount it by name.
 
+> Hint: defaults,noauto in fstab; mount /manual by name.
+
 **Task 8.** Add a data mount with an option that prevents a missing device from breaking the boot, and explain the difference from `noauto`.
+
+> Hint: defaults,nofail — still mounts when device exists; unlike noauto.
 
 **Task 9.** Mount a filesystem read-only, then convert it to read-write without unmounting.
 
+> Hint: mount -o remount,ro then rw without unmounting.
+
 **Task 10.** Mount a filesystem so binaries on it cannot be executed and SUID bits are ignored. Prove both.
+
+> Hint: defaults,nosuid,noexec in fstab; prove with /data/echo and a SUID binary.
 
 **Task 11.** Report the UUID, label, and type of every block device on the system.
 
+> Hint: lsblk -f and blkid for every UUID, label, and type.
+
 **Task 12.** Change the label of an existing XFS filesystem and of an ext4 filesystem.
+
+> Hint: xfs_admin -L requires unmount; e2label works mounted.
 
 **Task 13.** Grow an XFS filesystem after its underlying device has been enlarged, then do the same for ext4.
 
+> Hint: Enlarge device first, then xfs_growfs /mountpoint or resize2fs /dev.
+
 **Task 14.** Check and repair an unmounted ext4 filesystem, then an unmounted XFS filesystem.
+
+> Hint: umount first; e2fsck -f / xfs_repair -n then repair.
 
 **Task 15.** `umount /data` reports "target is busy". Diagnose and resolve it.
 
+> Hint: umount busy: cd /, fuser -vm, kill, umount -l.
+
 **Task 16.** Deliberately write a broken `/etc/fstab` entry, detect the problem before rebooting, and fix it.
+
+> Hint: findmnt --verify catches bad UUIDs before reboot.
 
 **Task 17.** The system has booted into emergency mode because of a bad `/etc/fstab`. Recover it.
 
+> Hint: emergency mode: mount -o remount,rw /, fix fstab, findmnt --verify, reboot.
+
 **Task 18.** A filesystem reports "No space left on device" but `df -h` shows free space. Diagnose it.
+
+> Hint: df -h shows space but writes fail → df -i; also lsof +L1 for deleted-open files.
 
 **Task 19.** Report the ten largest directories under `/var`.
 
+> Hint: du -h --max-depth=1 /var | sort -h | tail.
+
 **Task 20.** Configure a filesystem to be mounted automatically on first access rather than at boot.
 
+> Hint: x-systemd.automount in fstab; systemctl daemon-reload after edit.
+
 **Task 21.** Verify every filesystem and `/etc/fstab` entry survives a reboot.
+
+> Hint: findmnt --verify, umount all added mounts, mount -a, reboot.
+
+---
 
 ---
 
@@ -1803,6 +1615,380 @@ sudo mount -a && echo OK || echo "*** DO NOT REBOOT ***"
 2. **A bad `/etc/fstab` entry** — the machine boots into emergency mode and every storage task scores nothing.
 
 **`nofail` protects against the second** without compromising the first, so use it on non-critical data mounts.
+
+---
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### Filesystem types
+
+| Type | Default for | Grow | Shrink | Notes |
+| --- | --- | --- | --- | --- |
+| **XFS** | **RHEL default** | **Yes, mounted** | **NEVER** | `mkfs.xfs`, `xfs_growfs`, `xfs_repair` |
+| **ext4** | Widely used | Yes | **Yes, unmounted** | `mkfs.ext4`, `resize2fs`, `fsck.ext4` |
+| **vfat** | USB, EFI | Yes | No | `mkfs.vfat`, no permissions or ownership |
+| ext3, ext2 | Legacy | Yes | Yes | Rare |
+| swap | Swap | — | — | `mkswap`, see `31-swap.md` |
+| iso9660 | Optical, ISO | — | — | Read-only |
+
+```bash
+sudo mkfs.xfs /dev/sdb1
+sudo mkfs.ext4 /dev/sdb1
+sudo mkfs.vfat /dev/sdb1
+sudo mkfs -t xfs /dev/sdb1
+sudo mkfs.xfs -f /dev/sdb1                 # -f forces over an existing filesystem
+sudo mkfs.xfs -L mydata /dev/sdb1          # with a label
+sudo mkfs.ext4 -L mydata /dev/sdb1
+sudo mkfs.vfat -n MYDATA /dev/sdb1         # vfat uses -n, and UPPERCASE labels
+```
+
+**Note the label flags differ: `-L` for XFS and ext4, `-n` for vfat.**
+
+**`mkfs` destroys everything on the device.** There is no confirmation for a blank device, and only a warning for one with an existing signature.
+
+The three the objective names are XFS, ext4, and vfat, so know all three. RHEL 10 may need a package for vfat:
+
+```bash
+sudo dnf install -y dosfstools          # mkfs.vfat
+sudo dnf install -y e2fsprogs xfsprogs
+```
+
+### Mounting
+
+```bash
+sudo mount /dev/sdb1 /data
+sudo mount UUID=4b2c9e1f-... /data
+sudo mount LABEL=mydata /data
+sudo mount -t xfs /dev/sdb1 /data
+sudo mount -o ro /dev/sdb1 /data
+sudo mount -o remount,rw /data
+sudo mount -a                              # everything in /etc/fstab
+sudo mount /data                           # if /data is in /etc/fstab
+
+sudo umount /data
+sudo umount /dev/sdb1
+sudo umount -l /data                       # lazy
+sudo umount -f /data                       # force (NFS)
+```
+
+**The mount point must exist first:**
+
+```bash
+sudo mkdir -p /data
+```
+
+Inspecting mounts:
+
+```bash
+mount                                      # everything, verbose
+findmnt                                    # tree view — much better
+findmnt /data
+findmnt -no SOURCE,FSTYPE /data
+findmnt --verify                           # VALIDATE /etc/fstab
+df -hT
+df -i                                      # inode usage
+cat /proc/mounts
+lsblk -f
+```
+
+```text
+$ findmnt /data
+TARGET SOURCE    FSTYPE OPTIONS
+/data  /dev/sdb1 xfs    rw,relatime,seclabel,attr2,inode64
+```
+
+**`findmnt` is better than `mount`** — it is a readable tree, it filters, and **`findmnt --verify` validates `/etc/fstab`**, which no other tool does.
+
+### /etc/fstab
+
+Six whitespace-separated fields:
+
+```text
+UUID=4b2c9e1f-3a8d-4e7f-9c1b-2d5a8f3e6b9c  /data  xfs  defaults  0 0
+              1                              2      3      4     5 6
+```
+
+| # | Field | Purpose | Common values |
+| --- | --- | --- | --- |
+| **1** | **Device** | What to mount | **`UUID=...`**, `LABEL=...`, `/dev/vg/lv` |
+| **2** | **Mount point** | Where | `/data`, `none` for swap |
+| **3** | **Type** | Filesystem | `xfs`, `ext4`, `vfat`, `swap`, `nfs`, `auto` |
+| **4** | **Options** | How | **`defaults`**, `noauto`, `nofail`, `ro`, `_netdev` |
+| 5 | Dump | Backup flag, obsolete | **`0`** |
+| 6 | fsck order | Boot-time check | **`0`** for XFS, `1` for `/`, `2` for others |
+
+```bash
+cat /etc/fstab
+grep -v '^#' /etc/fstab | grep -v '^$'
+```
+
+```text
+UUID=4b2c9e1f-...  /                       xfs   defaults        0 0
+UUID=8f3a1c2d-...  /boot                   xfs   defaults        0 0
+UUID=7d5e3a8b-...  none                    swap  defaults        0 0
+UUID=a1b2c3d4-...  /data                   xfs   defaults        0 0
+```
+
+**Fields 5 and 6 are `0 0` for everything you will add.** XFS does its own journal recovery and ignores field 6 entirely.
+
+### Why UUID and not /dev/sdb1
+
+```bash
+sudo blkid
+sudo blkid /dev/sdb1
+sudo blkid -s UUID -o value /dev/sdb1
+lsblk -f
+```
+
+**Device names depend on detection order.** Add a disk, change a controller, or boot with a USB stick inserted, and today's `/dev/sdb` becomes tomorrow's `/dev/sdc`. The `/etc/fstab` entry then mounts the wrong filesystem or fails — and a failure at boot means emergency mode.
+
+**A UUID belongs to the filesystem and never changes** unless you re-run `mkfs`.
+
+| Identifier | Stable across | Use in fstab |
+| --- | --- | --- |
+| `/dev/sdb1` | Nothing reliable | **Avoid** |
+| **`UUID=...`** | **Everything except `mkfs`** | **Preferred** |
+| `LABEL=...` | Everything except `mkfs`/relabel | Acceptable |
+| `/dev/vg/lv` | Everything except renaming | Acceptable for LVM |
+
+**The objective explicitly says "by UUID or label", so this is graded.** Write the line without transcribing anything:
+
+```bash
+echo "UUID=$(sudo blkid -s UUID -o value /dev/sdb1)  /data  xfs  defaults  0 0" | sudo tee -a /etc/fstab
+```
+
+**That one-liner eliminates the mistyped-UUID failure mode**, which is one of the most common ways to end up in emergency mode.
+
+Labels:
+
+```bash
+sudo xfs_admin -L mydata /dev/sdb1         # XFS — must be UNMOUNTED
+sudo xfs_admin -l /dev/sdb1                # read the label
+sudo e2label /dev/sdb1 mydata              # ext4
+sudo e2label /dev/sdb1
+sudo fatlabel /dev/sdb1 MYDATA             # vfat
+lsblk -f
+```
+
+### Mount options
+
+| Option | Effect |
+| --- | --- |
+| **`defaults`** | `rw,suid,dev,exec,auto,nouser,async` |
+| `ro` / `rw` | Read-only / read-write |
+| `noexec` | Forbid executing binaries |
+| `nosuid` | Ignore SUID bits |
+| `nodev` | Ignore device files |
+| **`noauto`** | **Do NOT mount at boot or with `mount -a`** |
+| **`nofail`** | **Do not fail the boot if the device is missing** |
+| `_netdev` | Wait for the network — **required for NFS and iSCSI** |
+| `user` | Allow any user to mount |
+| `acl` | Enable POSIX ACLs (default on XFS) |
+| `usrquota`, `grpquota` | Enable quotas |
+| `x-systemd.automount` | Mount on first access |
+| `noatime`, `relatime` | Reduce access-time writes |
+| `uid=`, `gid=`, `dmask=`, `fmask=` | **vfat ownership and permissions** |
+
+Combine with commas, no spaces:
+
+```text
+UUID=xxx  /data  xfs   defaults,nofail          0 0
+UUID=xxx  /data  ext4  defaults,noexec,nosuid   0 0
+UUID=xxx  /usb   vfat  defaults,uid=1000,gid=1000 0 0
+server:/export /nfs nfs defaults,_netdev        0 0
+```
+
+**`nofail` is a safety net worth using on every non-critical mount.** With `nofail`, a missing device is skipped and the boot continues; without it, the boot stops in emergency mode. Use it for data mounts, removable media, and anything you are experimenting with.
+
+**But read the task.** If it says "mount at boot", the entry must actually mount — `noauto` would fail the task, whereas `nofail` still mounts when the device is present.
+
+### The verification ritual
+
+**Run these two commands after every `/etc/fstab` change, without exception:**
+
+```bash
+sudo findmnt --verify
+sudo mount -a
+```
+
+```text
+$ sudo findmnt --verify
+Success, no errors or warnings detected
+```
+
+`findmnt --verify` catches syntax errors, unknown filesystem types, missing mount points, and unresolvable UUIDs. `mount -a` proves every entry actually mounts.
+
+```text
+$ sudo findmnt --verify
+/data: unreachable source: UUID=wrong-uuid-here
+```
+
+**If either fails, do not reboot.** Fix `/etc/fstab` first. This is the highest-value habit on the entire exam.
+
+A fuller test:
+
+```bash
+sudo umount /data
+sudo mount -a
+findmnt /data
+df -hT /data
+```
+
+**Unmounting first and then `mount -a` proves the fstab line works**, rather than merely that your earlier manual mount is still in place.
+
+### Recovering from a bad fstab
+
+If you do reboot with a broken `/etc/fstab`:
+
+```text
+[FAILED] Failed to mount /data.
+[DEPEND] Dependency failed for Local File Systems.
+Give root password for maintenance:
+(or press Control-D to continue)
+```
+
+```bash
+# Enter the root password, then:
+mount -o remount,rw /            # the root fs is READ-ONLY in emergency mode
+vim /etc/fstab                   # fix or comment out the bad line
+findmnt --verify
+mount -a
+reboot
+```
+
+**`mount -o remount,rw /` first.** In emergency mode `/` is read-only, so `vim` cannot save and people panic. See `15-systemd-targets-boot.md` and `16-boot-interrupt-root-recovery.md`.
+
+### Growing a filesystem
+
+```bash
+# XFS — the MOUNT POINT, and it must be mounted
+sudo xfs_growfs /data
+sudo xfs_growfs -D 1000000 /data           # to a specific block count
+
+# ext4 — the DEVICE, mounted or not
+sudo resize2fs /dev/sdb1
+sudo resize2fs /dev/sdb1 2G
+
+# LVM does both at once
+sudo lvextend -r -L +500M /dev/vg01/lv01
+```
+
+| | XFS | ext4 |
+| --- | --- | --- |
+| Grow | **`xfs_growfs MOUNTPOINT`** | `resize2fs DEVICE` |
+| Must be mounted to grow | **Yes** | No |
+| Shrink | **Impossible** | Yes, unmounted, after `e2fsck -f` |
+
+**The argument type is the thing people get wrong**: `xfs_growfs` takes a mount point, `resize2fs` takes a device.
+
+### Checking and repairing
+
+```bash
+# ext4 — MUST be unmounted
+sudo umount /data
+sudo e2fsck -f /dev/sdb1
+sudo fsck /dev/sdb1
+sudo fsck -y /dev/sdb1
+
+# XFS — MUST be unmounted
+sudo umount /data
+sudo xfs_repair /dev/sdb1
+sudo xfs_repair -n /dev/sdb1               # -n = check only, change nothing
+sudo xfs_info /data                        # info on a MOUNTED xfs
+sudo xfs_db -c frag -r /dev/sdb1
+```
+
+**Never fsck or xfs_repair a mounted filesystem** — it corrupts it. Unmount first, always.
+
+### Space and inodes
+
+```bash
+df -h
+df -hT
+df -i                                      # INODES
+du -sh /data
+du -sh /data/* | sort -h
+du -h --max-depth=1 /var | sort -h
+sudo du -sh /var/log
+```
+
+**"No space left on device" with `df -h` showing free space means inode exhaustion.** Check `df -i`:
+
+```text
+$ df -i /data
+Filesystem                Inodes  IUsed  IFree IUse% Mounted on
+/dev/sdb1                 524288 524288      0  100% /data
+```
+
+Millions of tiny files do this. XFS allocates inodes dynamically and is largely immune; ext4 fixes the count at `mkfs` time.
+
+### Automatic mounting on access
+
+```text
+UUID=xxx  /data  xfs  defaults,x-systemd.automount,x-systemd.idle-timeout=60  0 0
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart local-fs.target
+```
+
+The filesystem is mounted on first access and unmounted after the idle timeout. **Useful for slow or removable devices.** For NFS this is usually done with autofs instead — see `32-nfs-autofs.md`.
+
+### SELinux and mounting
+
+```bash
+ls -Zd /data
+sudo restorecon -Rv /data
+```
+
+**A newly created filesystem mounted on a new directory gets a default context that may be wrong for a service.** If the mount is going to hold web content or similar:
+
+```bash
+sudo semanage fcontext -a -t httpd_sys_content_t "/data(/.*)?"
+sudo restorecon -Rv /data
+```
+
+**A `mount` can also hide the context of the underlying directory.** After mounting, `ls -Zd /data` shows the mounted filesystem's root, not the original directory. See `27-selinux.md`.
+
+### The full workflow
+
+```bash
+# 1. Identify (28-disks-partitions.md)
+lsblk
+
+# 2. Partition (28-disks-partitions.md)
+sudo fdisk /dev/sdb          # n, Enter, Enter, +1G, w
+sudo partprobe /dev/sdb
+
+# 3. Filesystem
+sudo mkfs.xfs /dev/sdb1
+
+# 4. Mount point
+sudo mkdir -p /data
+
+# 5. Test mount
+sudo mount /dev/sdb1 /data
+df -hT /data
+
+# 6. PERSIST
+sudo blkid /dev/sdb1
+echo "UUID=$(sudo blkid -s UUID -o value /dev/sdb1)  /data  xfs  defaults  0 0" | sudo tee -a /etc/fstab
+
+# 7. VERIFY — never skip
+sudo findmnt --verify
+sudo umount /data
+sudo mount -a
+df -hT /data
+
+# 8. Prove it
+sudo reboot
+df -hT /data
+```
+
+**Steps 6 and 7 are where the marks are.**
 
 ## Exam Tips
 

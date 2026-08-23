@@ -2,357 +2,272 @@
 
 **Objective:** Configure IPv4 and IPv6 addresses. Configure network services to start automatically at boot.
 
-**This is one of the highest-risk objectives on the exam.** A mistake here can disconnect you from the machine you are being graded on. Read the "how not to lock yourself out" section before you touch anything.
+**This is one of the highest-risk objectives on the exam.** A mistake here can disconnect you from the machine you are being graded on. Read the "how not to lock yourself out" section in Quick Reference before you touch anything.
 
-## Concept Refresher
+## Before You Start
 
-### The RHEL networking stack
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
-```text
-   ┌──────────────────────────────────────────────────────┐
-   │  nmcli / nmtui / nm-connection-editor                │  ← you
-   └────────────────────────┬─────────────────────────────┘
-                            │  D-Bus
-   ┌────────────────────────▼─────────────────────────────┐
-   │  NetworkManager  (NetworkManager.service)            │  ← the manager
-   │    reads/writes connection profiles under            │
-   │    /etc/NetworkManager/system-connections/           │
-   └────────────────────────┬─────────────────────────────┘
-                            │  netlink
-   ┌────────────────────────▼─────────────────────────────┐
-   │  kernel: interfaces, addresses, routes               │  ← the live state
-   │    visible with `ip addr`, `ip route`                │
-   └──────────────────────────────────────────────────────┘
+```bash
+vagrant ssh server1    # or ssh into your practice VM
 ```
 
-Two ideas you must keep separate:
+**How to use this file:**
 
-| | **Device** (interface) | **Connection** (profile) |
-| --- | --- | --- |
-| What it is | Physical or virtual hardware: `ens160`, `eth0` | A **named set of settings** applied to a device |
-| Listed by | `nmcli device status` | `nmcli connection show` |
-| Count | One per NIC | **Zero, one, or many per NIC** |
-| Stored where | Nowhere; it is hardware | **`/etc/NetworkManager/system-connections/*.nmconnection`** |
-| Persists | n/a | **Yes** |
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
 
-A device can have several connection profiles defined and only one active. This is why `nmcli con mod` changes a file, and `nmcli con up` applies it.
+**Keep your hypervisor console open.** If you break SSH networking, that is how you recover.
 
-**`ip addr add` changes the kernel only and is lost on reboot. `nmcli con mod` writes a file and persists.** That sentence is worth more marks than anything else on this page.
+---
 
-### Interface naming
+## Follow Along
 
-RHEL uses predictable names derived from firmware and topology, not `eth0`:
+Work on your lab VM. After each step, compare your output to **You should see**.
 
-| Prefix | Meaning |
-| --- | --- |
-| `en` | Ethernet |
-| `wl` | Wireless LAN |
-| `ens160`, `ens192` | Ethernet, **s**lot 160 |
-| `enp0s3` | Ethernet, **p**CI bus 0, **s**lot 3 |
-| `eno1` | Ethernet, **o**nboard index 1 |
-| `lo` | Loopback |
+Use your **second interface** (`ens192` or similar) for static-address practice if you have one. Keep `ens160` (your SSH interface) on DHCP unless you have console access.
 
-**Always check the actual name first** — do not assume `eth0`:
+### 1. List network devices
 
 ```bash
 nmcli device status
 ip -brief link show
 ```
 
-### Inspecting current state
+**You should see** each interface with a STATE and CONNECTION column. `ens160` is probably `connected`; a second NIC may show `disconnected`.
+
+**Always check the actual interface name first** — it is `ens160` or `enp0s3`, not `eth0`.
+
+### 2. List connection profiles
 
 ```bash
-# Devices and their connection state
-nmcli device status
-nmcli device show
-nmcli device show ens160
-
-# Connection profiles
-nmcli connection show                       # all profiles
-nmcli connection show --active              # only active ones
-nmcli connection show "Wired connection 1"  # full detail of one profile
-nmcli -f ipv4.method,ipv4.addresses,ipv4.gateway connection show ens160
-
-# Kernel state
-ip addr show
-ip -4 addr show
-ip -brief addr show                          # compact, very readable
-ip route show
-ip -6 route show
-ip link show
+nmcli connection show
+nmcli connection show --active
 ```
 
-`nmcli` accepts abbreviations, so `nmcli c s`, `nmcli con show`, and `nmcli connection show` are the same. `nmcli d` is `device`, `nmcli c` is `connection`, `nmcli g` is `general`.
+**You should see** named profiles like `ens160` bound to devices. A profile with `--` in the DEVICE column exists but is not active.
 
-**`ip -brief addr` is the fastest way to see all addresses**, and `nmcli device status` the fastest way to see which profile is active where.
+A **device** is hardware; a **connection** is a named set of settings stored in a file.
 
-### Creating a connection profile
+### 3. Inspect live addresses with ip
+
+```bash
+ip -brief addr show
+ip route show
+```
+
+**You should see** IP addresses with prefixes (like `/24`), and a `default via` line for the gateway.
+
+**`ip` shows what the kernel has right now.** This is your ground truth.
+
+### 4. Read the current profile settings
+
+```bash
+nmcli -f ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns connection show ens160
+```
+
+**You should see** the configured method (`auto` for DHCP or `manual` for static), addresses, gateway, and DNS.
+
+When `ip` and `nmcli` disagree, the profile has not been applied — run `nmcli con up`.
+
+### 5. Create a static connection profile
+
+Replace `ens192` with your second interface if the name differs:
 
 ```bash
 sudo nmcli connection add \
   type ethernet \
-  con-name static-ens160 \
-  ifname ens160 \
+  con-name static-lab \
+  ifname ens192 \
   ipv4.method manual \
-  ipv4.addresses 192.168.56.11/24 \
-  ipv4.gateway 192.168.56.1 \
-  ipv4.dns "192.168.56.1 8.8.8.8" \
-  ipv4.dns-search example.com \
-  autoconnect yes
+  ipv4.addresses 192.168.100.50/24 \
+  ipv4.gateway 192.168.100.1 \
+  ipv4.dns "192.168.100.1 8.8.8.8" \
+  ipv4.dns-search lab.example.com \
+  connection.autoconnect yes
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `type ethernet` | Connection type |
-| `con-name` | **The profile name** you will refer to later |
-| `ifname` | The device it binds to |
-| `ipv4.method manual` | **Static.** The alternative is `auto` for DHCP |
-| `ipv4.addresses` | **Address with prefix.** `/24`, not a separate netmask |
-| `ipv4.gateway` | Default gateway |
-| `ipv4.dns` | **Space-separated, quoted** if more than one |
-| `autoconnect yes` | **Activate at boot.** This is the persistence flag |
+**You should see** "Connection 'static-lab' (...) successfully added."
 
-Then activate it:
+Four things must be right: **`ipv4.method manual`**, address **with prefix** (`/24`), DNS **space-separated in quotes**, and **`connection.autoconnect yes`**.
+
+### 6. Activate the profile
 
 ```bash
-sudo nmcli connection up static-ens160
+sudo nmcli connection up static-lab
+ip -brief addr show ens192
 ```
 
-**`ipv4.method manual` is mandatory for a static address.** If you set `ipv4.addresses` but leave the method as `auto`, DHCP still runs and your address may be ignored or supplemented. This is the classic silent failure.
+**You should see** "Connection successfully activated" and the address `192.168.100.50/24` on the interface.
 
-### Modifying an existing profile
+**Verify with `ip addr`, not just `nmcli con show`.** The profile shows intent; `ip` shows reality.
+
+### 7. Append a second address with +
 
 ```bash
-sudo nmcli connection modify ens160 ipv4.method manual
-sudo nmcli connection modify ens160 ipv4.addresses 192.168.56.11/24
-sudo nmcli connection modify ens160 ipv4.gateway 192.168.56.1
-sudo nmcli connection modify ens160 ipv4.dns "192.168.56.1"
-sudo nmcli connection modify ens160 connection.autoconnect yes
-
-# Apply the changes — modify alone does NOT apply them
-sudo nmcli connection up ens160
+sudo nmcli connection modify static-lab +ipv4.addresses 192.168.100.51/24
+sudo nmcli connection up static-lab
+ip -brief addr show ens192
 ```
 
-**`nmcli con mod` writes the file but does not touch the running system.** You must follow it with `nmcli con up <profile>` (or `nmcli device reapply`). Forgetting this is why "I configured it and it did not work" happens.
+**You should see** both `.50` and `.51` on the interface.
 
-Adding versus replacing values:
+**The `+` appends to a list.** Without it, assignment **replaces** the entire address list and you lose the first address.
+
+### 8. Append a DNS server with +
 
 ```bash
-sudo nmcli con mod ens160 ipv4.addresses 10.0.0.5/24        # REPLACES all addresses
-sudo nmcli con mod ens160 +ipv4.addresses 10.0.0.6/24       # ADDS a second address
-sudo nmcli con mod ens160 -ipv4.addresses 10.0.0.6/24       # REMOVES that address
-sudo nmcli con mod ens160 +ipv4.dns 8.8.4.4                 # ADDS a DNS server
+nmcli -f ipv4.dns con show static-lab
+sudo nmcli connection modify static-lab +ipv4.dns 8.8.4.4
+sudo nmcli connection up static-lab
+nmcli -f ipv4.dns con show static-lab
 ```
 
-**The `+` and `-` prefixes are important.** Without `+`, you overwrite the whole list — which for `ipv4.dns` means you silently drop the existing resolver.
+**You should see** `8.8.4.4` added to the existing list.
 
-### Switching to DHCP
+**Forgetting `+` on `ipv4.dns` silently deletes your working resolver.**
+
+### 9. Configure IPv6 on the same profile
 
 ```bash
-sudo nmcli con mod ens160 ipv4.method auto
-sudo nmcli con mod ens160 -ipv4.addresses 192.168.56.11/24
-sudo nmcli con mod ens160 ipv4.gateway ""
-sudo nmcli con mod ens160 ipv4.dns ""
-sudo nmcli con up ens160
+sudo nmcli connection modify static-lab ipv6.method manual
+sudo nmcli connection modify static-lab ipv6.addresses 2001:db8:100::50/64
+sudo nmcli connection modify static-lab ipv6.gateway 2001:db8:100::1
+sudo nmcli connection up static-lab
+ip -6 addr show ens192
 ```
 
-Setting a property to `""` clears it. **Leaving a stale static gateway while switching to DHCP causes routing confusion**, so clear it.
+**You should see** `2001:db8:100::50/64 scope global`. The `fe80::` address is automatic link-local — not what a task asks you to configure.
 
-### Activating, deactivating, deleting
-
-```bash
-sudo nmcli connection up static-ens160
-sudo nmcli connection down static-ens160
-sudo nmcli connection reload                  # re-read files from disk
-sudo nmcli connection delete old-profile
-sudo nmcli device reapply ens160              # apply changes without down/up
-sudo nmcli device connect ens160
-sudo nmcli device disconnect ens160
-```
-
-**`nmcli con down` then `up` briefly drops the link.** Over SSH, that disconnects you. See the lockout section.
-
-### IPv6
-
-Identical syntax with the `ipv6.` prefix:
-
-```bash
-sudo nmcli con mod ens160 ipv6.method manual
-sudo nmcli con mod ens160 ipv6.addresses 2001:db8::11/64
-sudo nmcli con mod ens160 ipv6.gateway 2001:db8::1
-sudo nmcli con mod ens160 ipv6.dns 2001:4860:4860::8888
-sudo nmcli con up ens160
-```
-
-IPv6 methods:
-
-| Method | Behaviour |
-| --- | --- |
-| `auto` | SLAAC / router advertisements |
-| `dhcp` | DHCPv6 only |
-| `manual` | **Static** |
-| `link-local` | Only a `fe80::` address |
-| `ignore` | No IPv6 at all |
-| `disabled` | IPv6 off for this connection |
-
-Verify:
-
-```bash
-ip -6 addr show ens160
-ip -6 route show
-ping6 -c2 2001:db8::1
-ping -6 -c2 2001:db8::1
-```
-
-**Every `fe80::` address is link-local and automatic** — it is not the address a task asks you to configure.
-
-### nmtui
-
-A curses interface. Slower than `nmcli` but hard to get wrong, and a fine fallback if the exact `nmcli` property name escapes you.
-
-```bash
-sudo nmtui
-sudo nmtui-edit
-sudo nmtui-connect
-sudo nmtui-hostname
-```
-
-**Remember to Activate the connection after editing in nmtui** — like `nmcli con mod`, editing alone does not apply.
-
-### The profile files
+### 10. Find the on-disk profile file
 
 ```bash
 sudo ls -l /etc/NetworkManager/system-connections/
-sudo cat /etc/NetworkManager/system-connections/static-ens160.nmconnection
+sudo cat /etc/NetworkManager/system-connections/static-lab.nmconnection
 ```
 
-```ini
-[connection]
-id=static-ens160
-uuid=...
-type=ethernet
-interface-name=ens160
-autoconnect=true
+**You should see** mode `-rw-------` (0600) and a keyfile with `[connection]`, `[ipv4]`, and `[ipv6]` sections.
 
-[ipv4]
-method=manual
-address1=192.168.56.11/24,192.168.56.1
-dns=192.168.56.1;
+**This file is the persistence.** Hand-edits need `nmcli connection reload` afterwards.
 
-[ipv6]
-method=auto
-```
-
-**Permissions must be `600`**, since the file can contain secrets. NetworkManager refuses to load a world-readable profile. If you hand-edit a file, run `nmcli con reload` afterwards.
-
-RHEL 8 used `/etc/sysconfig/network-scripts/ifcfg-*`. **RHEL 9 and 10 use keyfiles in `/etc/NetworkManager/system-connections/`.** The old `ifcfg` format is deprecated and the `network-scripts` package is gone.
-
-### NetworkManager service
+### 11. Check autoconnect
 
 ```bash
-systemctl status NetworkManager
-sudo systemctl enable --now NetworkManager
-nmcli general status
-nmcli networking on
-nmcli networking off
-nmcli general permissions
+nmcli -f NAME,AUTOCONNECT connection show
 ```
 
-`nmcli general status` should show `STATE: connected`. If it shows `asleep` or `disconnected`, networking is off:
+**You should see** `yes` for profiles that must activate at boot.
+
+**`connection.autoconnect yes` is the persistence flag.** Without it, the profile exists but nothing activates it after a reboot.
+
+### 12. ip addr add does not persist
 
 ```bash
-nmcli networking on
+sudo ip addr add 192.168.100.99/24 dev ens192
+ip -brief addr show ens192
+grep -r 192.168.100.99 /etc/NetworkManager/system-connections/ 2>/dev/null
 ```
 
-### How not to lock yourself out
+**You should see** the address on the interface, but **no output** from grep — nothing on disk.
 
-**You are working over SSH. A network mistake ends your session and possibly your exam.**
-
-Habits that protect you:
-
-1. **Never `nmcli con down` your management interface** unless you have console access.
-2. **Prefer `nmcli device reapply`** where possible — it applies changes with less disruption than a down/up cycle.
-3. **Use a second interface for practice** if the VM has one.
-4. **Test with a timed rollback** when making a risky change from a console-less machine:
+Now reapply the profile:
 
 ```bash
-# Schedule an undo before making the change
-echo "nmcli con up ens160" | sudo at now + 5 minutes
+sudo nmcli connection up static-lab
+ip -brief addr show ens192
 ```
 
-5. **Keep the console open** in your hypervisor, so a lost SSH session is recoverable.
-6. **Write the change, verify the file, then apply**:
+**You should see** `.99` is gone. **`ip` is for looking; `nmcli` is for changing.**
 
-```bash
-sudo nmcli con mod ens160 ipv4.addresses 192.168.56.11/24
-sudo nmcli -f ipv4 con show ens160        # read it back BEFORE applying
-sudo nmcli con up ens160
-```
+### Mini checkpoint
 
-If you do get disconnected, the fix is on the console: `nmcli con up <profile>` or, in the worst case, `ip addr add` temporarily to restore access and then repair the profile properly.
+Before the practice tasks, you should be able to explain:
 
-### Troubleshooting flow
+| Concept | Key point |
+| --- | --- |
+| Device vs connection | Hardware vs named profile file |
+| `nmcli con mod` | Writes the file; does **not** apply |
+| `nmcli con up` | Applies the profile to the kernel |
+| `ipv4.method manual` | Required for static IPv4 |
+| `connection.autoconnect yes` | Activate at boot |
+| `+ipv4.addresses` | Append; plain assignment replaces |
+| `+ipv4.dns` | Append; plain assignment replaces |
+| `ip addr add` | Kernel only; **lost on reboot** |
+| Profile file location | `/etc/NetworkManager/system-connections/` |
+| File permissions | Must be **0600** |
 
-```bash
-# 1. Is the device present and up?
-nmcli device status
-ip link show ens160
+If any row is blank in your head, re-run the step above that covers it.
 
-# 2. Does it have the address you expect?
-ip -brief addr show ens160
+---
 
-# 3. Is there a default route?
-ip route show | grep default
+## Practice Tasks
 
-# 4. Can you reach the gateway?
-ping -c2 192.168.56.1
-
-# 5. Can you reach outside?
-ping -c2 8.8.8.8
-
-# 6. Does DNS work? (see 25-hostnames-dns.md)
-getent hosts server2.lab.example.com
-
-# 7. What does NetworkManager think?
-nmcli general status
-sudo journalctl -u NetworkManager -n 30
-```
-
-**Working through those seven steps in order localises almost any network fault**: no address means a profile problem, address but no route means a gateway problem, route but no ping means a firewall or upstream problem, ping to an IP working but names failing means DNS.
-
-## Tasks
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Identify all network devices on this system, their types, and which connection profile is active on each.
 
+> Hint: `nmcli device status`; read DEVICE, TYPE, STATE, CONNECTION columns.
+
 **Task 2.** Show the current IPv4 address, prefix, default gateway, and DNS servers, using both `ip` and `nmcli`.
+
+> Hint: `ip -brief addr show`, `ip route show`, and `nmcli -f ipv4... connection show`.
 
 **Task 3.** Create a new connection profile named `static-lab` bound to your second interface, with the static address `192.168.100.50/24`, gateway `192.168.100.1`, DNS servers `192.168.100.1` and `8.8.8.8`, and the search domain `lab.example.com`. It must activate at boot.
 
+> Hint: follow-along step 5; `ipv4.method manual` and `connection.autoconnect yes`.
+
 **Task 4.** Activate the profile and verify that the kernel now shows the address and route.
+
+> Hint: `nmcli con up`, then `ip -brief addr show` and `ping` the gateway.
 
 **Task 5.** Add a second IPv4 address, `192.168.100.51/24`, to the same profile without removing the first.
 
+> Hint: `+ipv4.addresses`, not plain assignment.
+
 **Task 6.** Add `8.8.4.4` as an additional DNS server without disturbing the existing entries, then remove it again.
+
+> Hint: `+ipv4.dns` to add, `-ipv4.dns` to remove.
 
 **Task 7.** Configure the static IPv6 address `2001:db8:100::50/64` with gateway `2001:db8:100::1` on the same profile, and verify it.
 
+> Hint: follow-along step 9; look for `scope global`, not `fe80::`.
+
 **Task 8.** Convert the profile from static addressing back to DHCP, cleanly removing the static settings.
+
+> Hint: `ipv4.method auto`, clear addresses/gateway/DNS with `""`.
 
 **Task 9.** Locate the on-disk file for this connection profile, examine its contents, and confirm the permissions are correct.
 
+> Hint: `/etc/NetworkManager/system-connections/`; mode must be 0600.
+
 **Task 10.** Set `autoconnect` to off for a profile, then explain what happens after a reboot, then turn it back on.
+
+> Hint: `connection.autoconnect no` — profile exists but device stays down at boot.
 
 **Task 11.** Add a static route so that the `10.10.10.0/24` network is reached via `192.168.100.254`, persistently.
 
+> Hint: `+ipv4.routes "10.10.10.0/24 192.168.100.254"`.
+
 **Task 12.** Deliberately break your configuration by setting a wrong gateway, diagnose the symptom, and repair it.
+
+> Hint: local pings work, remote pings fail — that is a gateway fault.
 
 **Task 13.** Show that `ip addr add` does not persist, and contrast this with the `nmcli` equivalent.
 
+> Hint: follow-along step 12; grep the keyfile directory.
+
 **Task 14.** Rename a connection profile and delete an unused one.
+
+> Hint: `connection.id` for rename; never delete your SSH profile.
 
 **Task 15.** Configure the same requirements as Task 3 using `nmtui` instead of `nmcli`.
 
+> Hint: Manual IPv4, check "Automatically connect", then activate the connection.
+
 **Task 16.** Verify all your network configuration survives a reboot.
+
+> Hint: check AUTOCONNECT, NetworkManager enabled, keyfiles 0600, then reboot.
 
 ---
 
@@ -1014,6 +929,324 @@ nmcli -f NAME,AUTOCONNECT connection show
 systemctl is-enabled NetworkManager
 ip -brief addr show
 ```
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### The RHEL networking stack
+
+```text
+   ┌──────────────────────────────────────────────────────┐
+   │  nmcli / nmtui / nm-connection-editor                │  ← you
+   └────────────────────────┬─────────────────────────────┘
+                            │  D-Bus
+   ┌────────────────────────▼─────────────────────────────┐
+   │  NetworkManager  (NetworkManager.service)            │  ← the manager
+   │    reads/writes connection profiles under            │
+   │    /etc/NetworkManager/system-connections/           │
+   └────────────────────────┬─────────────────────────────┘
+                            │  netlink
+   ┌────────────────────────▼─────────────────────────────┐
+   │  kernel: interfaces, addresses, routes               │  ← the live state
+   │    visible with `ip addr`, `ip route`                │
+   └──────────────────────────────────────────────────────┘
+```
+
+Two ideas you must keep separate:
+
+| | **Device** (interface) | **Connection** (profile) |
+| --- | --- | --- |
+| What it is | Physical or virtual hardware: `ens160`, `eth0` | A **named set of settings** applied to a device |
+| Listed by | `nmcli device status` | `nmcli connection show` |
+| Count | One per NIC | **Zero, one, or many per NIC** |
+| Stored where | Nowhere; it is hardware | **`/etc/NetworkManager/system-connections/*.nmconnection`** |
+| Persists | n/a | **Yes** |
+
+A device can have several connection profiles defined and only one active. This is why `nmcli con mod` changes a file, and `nmcli con up` applies it.
+
+**`ip addr add` changes the kernel only and is lost on reboot. `nmcli con mod` writes a file and persists.** That sentence is worth more marks than anything else on this page.
+
+### Interface naming
+
+RHEL uses predictable names derived from firmware and topology, not `eth0`:
+
+| Prefix | Meaning |
+| --- | --- |
+| `en` | Ethernet |
+| `wl` | Wireless LAN |
+| `ens160`, `ens192` | Ethernet, **s**lot 160 |
+| `enp0s3` | Ethernet, **p**CI bus 0, **s**lot 3 |
+| `eno1` | Ethernet, **o**nboard index 1 |
+| `lo` | Loopback |
+
+**Always check the actual name first** — do not assume `eth0`:
+
+```bash
+nmcli device status
+ip -brief link show
+```
+
+### Inspecting current state
+
+```bash
+# Devices and their connection state
+nmcli device status
+nmcli device show
+nmcli device show ens160
+
+# Connection profiles
+nmcli connection show                       # all profiles
+nmcli connection show --active              # only active ones
+nmcli connection show "Wired connection 1"  # full detail of one profile
+nmcli -f ipv4.method,ipv4.addresses,ipv4.gateway connection show ens160
+
+# Kernel state
+ip addr show
+ip -4 addr show
+ip -brief addr show                          # compact, very readable
+ip route show
+ip -6 route show
+ip link show
+```
+
+`nmcli` accepts abbreviations, so `nmcli c s`, `nmcli con show`, and `nmcli connection show` are the same. `nmcli d` is `device`, `nmcli c` is `connection`, `nmcli g` is `general`.
+
+**`ip -brief addr` is the fastest way to see all addresses**, and `nmcli device status` the fastest way to see which profile is active where.
+
+### Creating a connection profile
+
+```bash
+sudo nmcli connection add \
+  type ethernet \
+  con-name static-ens160 \
+  ifname ens160 \
+  ipv4.method manual \
+  ipv4.addresses 192.168.56.11/24 \
+  ipv4.gateway 192.168.56.1 \
+  ipv4.dns "192.168.56.1 8.8.8.8" \
+  ipv4.dns-search example.com \
+  autoconnect yes
+```
+
+| Field | Meaning |
+| --- | --- |
+| `type ethernet` | Connection type |
+| `con-name` | **The profile name** you will refer to later |
+| `ifname` | The device it binds to |
+| `ipv4.method manual` | **Static.** The alternative is `auto` for DHCP |
+| `ipv4.addresses` | **Address with prefix.** `/24`, not a separate netmask |
+| `ipv4.gateway` | Default gateway |
+| `ipv4.dns` | **Space-separated, quoted** if more than one |
+| `autoconnect yes` | **Activate at boot.** This is the persistence flag |
+
+Then activate it:
+
+```bash
+sudo nmcli connection up static-ens160
+```
+
+**`ipv4.method manual` is mandatory for a static address.** If you set `ipv4.addresses` but leave the method as `auto`, DHCP still runs and your address may be ignored or supplemented. This is the classic silent failure.
+
+### Modifying an existing profile
+
+```bash
+sudo nmcli connection modify ens160 ipv4.method manual
+sudo nmcli connection modify ens160 ipv4.addresses 192.168.56.11/24
+sudo nmcli connection modify ens160 ipv4.gateway 192.168.56.1
+sudo nmcli connection modify ens160 ipv4.dns "192.168.56.1"
+sudo nmcli connection modify ens160 connection.autoconnect yes
+
+# Apply the changes — modify alone does NOT apply them
+sudo nmcli connection up ens160
+```
+
+**`nmcli con mod` writes the file but does not touch the running system.** You must follow it with `nmcli con up <profile>` (or `nmcli device reapply`). Forgetting this is why "I configured it and it did not work" happens.
+
+Adding versus replacing values:
+
+```bash
+sudo nmcli con mod ens160 ipv4.addresses 10.0.0.5/24        # REPLACES all addresses
+sudo nmcli con mod ens160 +ipv4.addresses 10.0.0.6/24       # ADDS a second address
+sudo nmcli con mod ens160 -ipv4.addresses 10.0.0.6/24       # REMOVES that address
+sudo nmcli con mod ens160 +ipv4.dns 8.8.4.4                 # ADDS a DNS server
+```
+
+**The `+` and `-` prefixes are important.** Without `+`, you overwrite the whole list — which for `ipv4.dns` means you silently drop the existing resolver.
+
+### Switching to DHCP
+
+```bash
+sudo nmcli con mod ens160 ipv4.method auto
+sudo nmcli con mod ens160 -ipv4.addresses 192.168.56.11/24
+sudo nmcli con mod ens160 ipv4.gateway ""
+sudo nmcli con mod ens160 ipv4.dns ""
+sudo nmcli con up ens160
+```
+
+Setting a property to `""` clears it. **Leaving a stale static gateway while switching to DHCP causes routing confusion**, so clear it.
+
+### Activating, deactivating, deleting
+
+```bash
+sudo nmcli connection up static-ens160
+sudo nmcli connection down static-ens160
+sudo nmcli connection reload                  # re-read files from disk
+sudo nmcli connection delete old-profile
+sudo nmcli device reapply ens160              # apply changes without down/up
+sudo nmcli device connect ens160
+sudo nmcli device disconnect ens160
+```
+
+**`nmcli con down` then `up` briefly drops the link.** Over SSH, that disconnects you. See the lockout section.
+
+### IPv6
+
+Identical syntax with the `ipv6.` prefix:
+
+```bash
+sudo nmcli con mod ens160 ipv6.method manual
+sudo nmcli con mod ens160 ipv6.addresses 2001:db8::11/64
+sudo nmcli con mod ens160 ipv6.gateway 2001:db8::1
+sudo nmcli con mod ens160 ipv6.dns 2001:4860:4860::8888
+sudo nmcli con up ens160
+```
+
+IPv6 methods:
+
+| Method | Behaviour |
+| --- | --- |
+| `auto` | SLAAC / router advertisements |
+| `dhcp` | DHCPv6 only |
+| `manual` | **Static** |
+| `link-local` | Only a `fe80::` address |
+| `ignore` | No IPv6 at all |
+| `disabled` | IPv6 off for this connection |
+
+Verify:
+
+```bash
+ip -6 addr show ens160
+ip -6 route show
+ping6 -c2 2001:db8::1
+ping -6 -c2 2001:db8::1
+```
+
+**Every `fe80::` address is link-local and automatic** — it is not the address a task asks you to configure.
+
+### nmtui
+
+A curses interface. Slower than `nmcli` but hard to get wrong, and a fine fallback if the exact `nmcli` property name escapes you.
+
+```bash
+sudo nmtui
+sudo nmtui-edit
+sudo nmtui-connect
+sudo nmtui-hostname
+```
+
+**Remember to Activate the connection after editing in nmtui** — like `nmcli con mod`, editing alone does not apply.
+
+### The profile files
+
+```bash
+sudo ls -l /etc/NetworkManager/system-connections/
+sudo cat /etc/NetworkManager/system-connections/static-ens160.nmconnection
+```
+
+```ini
+[connection]
+id=static-ens160
+uuid=...
+type=ethernet
+interface-name=ens160
+autoconnect=true
+
+[ipv4]
+method=manual
+address1=192.168.56.11/24,192.168.56.1
+dns=192.168.56.1;
+
+[ipv6]
+method=auto
+```
+
+**Permissions must be `600`**, since the file can contain secrets. NetworkManager refuses to load a world-readable profile. If you hand-edit a file, run `nmcli con reload` afterwards.
+
+RHEL 8 used `/etc/sysconfig/network-scripts/ifcfg-*`. **RHEL 9 and 10 use keyfiles in `/etc/NetworkManager/system-connections/`.** The old `ifcfg` format is deprecated and the `network-scripts` package is gone.
+
+### NetworkManager service
+
+```bash
+systemctl status NetworkManager
+sudo systemctl enable --now NetworkManager
+nmcli general status
+nmcli networking on
+nmcli networking off
+nmcli general permissions
+```
+
+`nmcli general status` should show `STATE: connected`. If it shows `asleep` or `disconnected`, networking is off:
+
+```bash
+nmcli networking on
+```
+
+### How not to lock yourself out
+
+**You are working over SSH. A network mistake ends your session and possibly your exam.**
+
+Habits that protect you:
+
+1. **Never `nmcli con down` your management interface** unless you have console access.
+2. **Prefer `nmcli device reapply`** where possible — it applies changes with less disruption than a down/up cycle.
+3. **Use a second interface for practice** if the VM has one.
+4. **Test with a timed rollback** when making a risky change from a console-less machine:
+
+```bash
+# Schedule an undo before making the change
+echo "nmcli con up ens160" | sudo at now + 5 minutes
+```
+
+5. **Keep the console open** in your hypervisor, so a lost SSH session is recoverable.
+6. **Write the change, verify the file, then apply**:
+
+```bash
+sudo nmcli con mod ens160 ipv4.addresses 192.168.56.11/24
+sudo nmcli -f ipv4 con show ens160        # read it back BEFORE applying
+sudo nmcli con up ens160
+```
+
+If you do get disconnected, the fix is on the console: `nmcli con up <profile>` or, in the worst case, `ip addr add` temporarily to restore access and then repair the profile properly.
+
+### Troubleshooting flow
+
+```bash
+# 1. Is the device present and up?
+nmcli device status
+ip link show ens160
+
+# 2. Does it have the address you expect?
+ip -brief addr show ens160
+
+# 3. Is there a default route?
+ip route show | grep default
+
+# 4. Can you reach the gateway?
+ping -c2 192.168.56.1
+
+# 5. Can you reach outside?
+ping -c2 8.8.8.8
+
+# 6. Does DNS work? (see 25-hostnames-dns.md)
+getent hosts server2.lab.example.com
+
+# 7. What does NetworkManager think?
+nmcli general status
+sudo journalctl -u NetworkManager -n 30
+```
+
+**Working through those seven steps in order localises almost any network fault**: no address means a profile problem, address but no route means a gateway problem, route but no ping means a firewall or upstream problem, ping to an IP working but names failing means DNS.
 
 ## Exam Tips
 

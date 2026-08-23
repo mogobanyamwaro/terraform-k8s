@@ -4,150 +4,190 @@
 
 A small objective with a short command set. Two or three commands and you are done, which makes it one of the cheapest points on the exam — do it early while you are fresh.
 
-## Concept Refresher
+## Before You Start
 
-`tuned` is a daemon that applies a bundle of kernel, CPU, disk, and network settings appropriate to a workload. Instead of hand-tuning `sysctl` values, you select a profile.
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
-sudo dnf install -y tuned
+vagrant ssh server1    # or ssh into your practice VM
+```
+
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+Reading every profile name upfront feels like learning. Typing them one at a time actually is.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. Install and enable tuned
+
+```bash
+rpm -q tuned || sudo dnf install -y tuned
 sudo systemctl enable --now tuned
+systemctl is-active tuned
+systemctl is-enabled tuned
 ```
 
-**`tuned` must be running for a profile to be applied.** Setting a profile with the service stopped records the choice but changes nothing.
+**You should see** the package installed, service **active** and **enabled**. **`tuned` must be running for a profile to be applied.** Setting a profile with the service stopped records the choice but changes nothing.
 
-### The commands
+### 2. List profiles and see which is active
 
 ```bash
-tuned-adm list                    # available profiles, with the current one marked
-tuned-adm active                  # which profile is active
-tuned-adm profile_info            # details of the active profile
-tuned-adm profile_info throughput-performance   # details of a named profile
-tuned-adm recommend               # what tuned suggests for this hardware
-sudo tuned-adm profile virtual-guest            # APPLY a profile
-sudo tuned-adm profile throughput-performance powersave   # combine (later wins on conflict)
-sudo tuned-adm off                # stop applying any profile
-sudo tuned-adm verify             # check the active profile's settings are actually in place
+tuned-adm list
+tuned-adm active
 ```
 
-Four to memorise: **`list`**, **`active`**, **`recommend`**, and **`profile <name>`**.
+**You should see** available profiles and the current one at the bottom of `list` output. Inside a VM, the active profile is often **`virtual-guest`**.
 
-### The standard profiles
-
-| Profile | Optimised for |
-| --- | --- |
-| **`balanced`** | **General purpose. The usual default** |
-| `powersave` | Minimum power consumption |
-| **`throughput-performance`** | **Maximum throughput. Typical for servers and databases** |
-| `latency-performance` | Minimum latency, at the cost of power |
-| `network-latency` | Low network latency |
-| `network-throughput` | Maximum network throughput |
-| **`virtual-guest`** | **A VM guest. What `recommend` returns inside a VM** |
-| `virtual-host` | A hypervisor |
-| `desktop` | Interactive responsiveness |
-| `accelerator-performance` | GPU and accelerator workloads |
-| `intel-sst` | Intel Speed Select |
-| `optimize-serial-console` | Serial console throughput |
-| `hpc-compute` | HPC compute nodes |
-
-Profiles inherit from each other. `virtual-guest` includes `throughput-performance` and adds VM-specific tweaks, which you can see with `tuned-adm profile_info virtual-guest`.
-
-### Where profiles live
-
-```text
-/usr/lib/tuned/                          Shipped profiles. DO NOT EDIT
-      └── balanced/tuned.conf
-/etc/tuned/                              YOUR profiles and overrides
-      └── myprofile/tuned.conf
-/etc/tuned/active_profile                the active profile name
-/etc/tuned/profile_mode                  auto or manual
-```
+### 3. What tuned recommends for this hardware
 
 ```bash
-ls /usr/lib/tuned/
-ls /etc/tuned/
-cat /etc/tuned/active_profile
+tuned-adm recommend
+```
+
+**You should see** `virtual-guest` on a VM, `throughput-performance` on bare-metal server hardware, or `balanced` on a laptop.
+
+### 4. Apply a profile and verify it genuinely took effect
+
+```bash
+sudo tuned-adm profile throughput-performance
+tuned-adm active
+sudo tuned-adm verify
+```
+
+**You should see** `Verification succeeded, current system settings match the preset profile.` **`tuned-adm verify` is the real check** — `active` only reports what you asked for.
+
+### 5. Inspect what a profile changes
+
+```bash
+tuned-adm profile_info virtual-guest
 cat /usr/lib/tuned/virtual-guest/tuned.conf
 ```
 
-**`/etc/tuned/active_profile` is the persistence mechanism.** `tuned-adm profile X` writes the name there, and `tuned` reads it at startup. That is why the setting survives a reboot without any extra step.
+**You should see** `include=throughput-performance` — profiles inherit from each other.
 
-### Creating a custom profile
-
-Occasionally asked. Inherit from an existing profile and override what you need.
+### 6. Where persistence lives
 
 ```bash
-sudo mkdir -p /etc/tuned/myprofile
-sudo tee /etc/tuned/myprofile/tuned.conf <<'EOF'
+cat /etc/tuned/active_profile
+ls /usr/lib/tuned/
+ls /etc/tuned/
+```
+
+**You should see** the active profile name in **`/etc/tuned/active_profile`**. **`tuned-adm profile X` writes there automatically** — no extra step needed for persistence.
+
+### 7. Create and apply a custom profile
+
+```bash
+sudo mkdir -p /etc/tuned/ex200
+sudo tee /etc/tuned/ex200/tuned.conf <<'EOF'
 [main]
-summary=Custom profile based on throughput-performance
-include=throughput-performance
+summary=EX200 practice profile
+include=balanced
 
 [sysctl]
 vm.swappiness=10
-net.core.somaxconn=2048
-
-[cpu]
-governor=performance
 EOF
 
-sudo tuned-adm profile myprofile
+sudo tuned-adm profile ex200
 tuned-adm active
 sudo tuned-adm verify
+sysctl vm.swappiness
 ```
 
-`include=` is the inheritance directive. A custom profile in `/etc/tuned/` with the same name as a shipped one takes precedence.
+**You should see** `vm.swappiness = 10`. Custom profiles go in **`/etc/tuned/<name>/tuned.conf`**, never `/usr/lib/tuned/`. Use **`include=`** or you lose all defaults from the parent profile.
 
-### Verifying a profile is genuinely applied
+### 8. Turn tuning off and back on
 
 ```bash
+sudo tuned-adm off
+tuned-adm active
+cat /etc/tuned/active_profile
+sudo tuned-adm profile balanced
 tuned-adm active
 sudo tuned-adm verify
-systemctl is-active tuned
-systemctl is-enabled tuned
-cat /etc/tuned/active_profile
 ```
 
-`tuned-adm verify` re-checks every setting the profile should have applied and reports any that do not match. It is the honest answer to "is this really in effect", as opposed to `active`, which only reports what was requested.
+**You should see** `No current active profile` after `off`, then `balanced` restored.
 
-Spot-check individual values:
+### 9. Spot-check individual kernel settings
 
 ```bash
 cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null
 sysctl vm.swappiness
-cat /sys/block/*/queue/scheduler
+grep -r swappiness /usr/lib/tuned/ /etc/tuned/ 2>/dev/null
 ```
 
-### Related: power profiles
+**You should see** where the active value comes from. Kernel parameters can also come from **`/etc/sysctl.d/`**, independently of `tuned` — check both when a value surprises you.
 
-RHEL 9 and later also ship `power-profiles-daemon` on desktops, which conflicts with `tuned`. On a server install only `tuned` is present. If both are installed, they fight; `tuned` is the one RHCSA cares about.
+### Mini checkpoint
 
-```bash
-systemctl status power-profiles-daemon 2>/dev/null
-```
+| Command | Does |
+| --- | --- |
+| `tuned-adm list` | available profiles |
+| `tuned-adm active` | current profile name |
+| `tuned-adm recommend` | suggested profile for this system |
+| `sudo tuned-adm profile <name>` | apply a profile |
+| `sudo tuned-adm verify` | confirm settings are actually applied |
+| `/etc/tuned/active_profile` | persistence mechanism |
+| `include=` in tuned.conf | inherit from another profile |
 
-## Tasks
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Determine whether `tuned` is installed, enabled, and running. Install and enable it if not.
 
+> Hint: follow-along step 1; `enable --now`, not just `start`.
+
 **Task 2.** List all available tuning profiles and identify which is currently active.
+
+> Hint: `tuned-adm list` and `tuned-adm active`.
 
 **Task 3.** Determine which profile `tuned` recommends for this system.
 
+> Hint: `tuned-adm recommend`.
+
 **Task 4.** Apply the recommended profile and confirm it is active.
+
+> Hint: `sudo tuned-adm profile "$(tuned-adm recommend)"`.
 
 **Task 5.** Apply the `throughput-performance` profile, then verify its settings are genuinely in place.
 
+> Hint: `tuned-adm verify` — not just `active`.
+
 **Task 6.** Show a description of what the `virtual-guest` profile changes.
+
+> Hint: `tuned-adm profile_info virtual-guest`.
 
 **Task 7.** Determine, from a configuration file rather than a command, which profile will be active after the next reboot.
 
+> Hint: `/etc/tuned/active_profile`.
+
 **Task 8.** Disable all tuning without uninstalling `tuned`, then re-enable the `balanced` profile.
+
+> Hint: `tuned-adm off` then `tuned-adm profile balanced`.
 
 **Task 9.** Create a custom profile named `ex200` that inherits from `balanced` and sets `vm.swappiness` to 10. Apply it and verify the setting took effect.
 
+> Hint: follow-along step 7.
+
 **Task 10.** Confirm that your profile choice survives a reboot.
 
+> Hint: check `is-enabled tuned` and `tuned-adm verify` after reboot — not just the profile name.
+
 **Task 11.** Determine the value of `vm.swappiness` currently in effect, and where the active tuned profile sets it.
+
+> Hint: `sysctl vm.swappiness` and grep tuned.conf files.
 
 ---
 
@@ -455,6 +495,123 @@ systemctl is-enabled tuned      # enabled
 systemctl is-active tuned       # active
 tuned-adm active                # the expected profile
 sudo tuned-adm verify           # settings genuinely in place
+```
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+`tuned` is a daemon that applies a bundle of kernel, CPU, disk, and network settings appropriate to a workload. Instead of hand-tuning `sysctl` values, you select a profile.
+
+```bash
+sudo dnf install -y tuned
+sudo systemctl enable --now tuned
+```
+
+### The commands
+
+```bash
+tuned-adm list                    # available profiles, with the current one marked
+tuned-adm active                  # which profile is active
+tuned-adm profile_info            # details of the active profile
+tuned-adm profile_info throughput-performance   # details of a named profile
+tuned-adm recommend               # what tuned suggests for this hardware
+sudo tuned-adm profile virtual-guest            # APPLY a profile
+sudo tuned-adm profile throughput-performance powersave   # combine (later wins on conflict)
+sudo tuned-adm off                # stop applying any profile
+sudo tuned-adm verify             # check the active profile's settings are actually in place
+```
+
+Four to memorise: **`list`**, **`active`**, **`recommend`**, and **`profile <name>`**.
+
+### The standard profiles
+
+| Profile | Optimised for |
+| --- | --- |
+| **`balanced`** | **General purpose. The usual default** |
+| `powersave` | Minimum power consumption |
+| **`throughput-performance`** | **Maximum throughput. Typical for servers and databases** |
+| `latency-performance` | Minimum latency, at the cost of power |
+| `network-latency` | Low network latency |
+| `network-throughput` | Maximum network throughput |
+| **`virtual-guest`** | **A VM guest. What `recommend` returns inside a VM** |
+| `virtual-host` | A hypervisor |
+| `desktop` | Interactive responsiveness |
+| `accelerator-performance` | GPU and accelerator workloads |
+| `intel-sst` | Intel Speed Select |
+| `optimize-serial-console` | Serial console throughput |
+| `hpc-compute` | HPC compute nodes |
+
+Profiles inherit from each other. `virtual-guest` includes `throughput-performance` and adds VM-specific tweaks, which you can see with `tuned-adm profile_info virtual-guest`.
+
+### Where profiles live
+
+```text
+/usr/lib/tuned/                          Shipped profiles. DO NOT EDIT
+      └── balanced/tuned.conf
+/etc/tuned/                              YOUR profiles and overrides
+      └── myprofile/tuned.conf
+/etc/tuned/active_profile                the active profile name
+/etc/tuned/profile_mode                  auto or manual
+```
+
+```bash
+ls /usr/lib/tuned/
+ls /etc/tuned/
+cat /etc/tuned/active_profile
+cat /usr/lib/tuned/virtual-guest/tuned.conf
+```
+
+**`/etc/tuned/active_profile` is the persistence mechanism.** `tuned-adm profile X` writes the name there, and `tuned` reads it at startup. That is why the setting survives a reboot without any extra step.
+
+### Creating a custom profile
+
+```bash
+sudo mkdir -p /etc/tuned/myprofile
+sudo tee /etc/tuned/myprofile/tuned.conf <<'EOF'
+[main]
+summary=Custom profile based on throughput-performance
+include=throughput-performance
+
+[sysctl]
+vm.swappiness=10
+net.core.somaxconn=2048
+
+[cpu]
+governor=performance
+EOF
+
+sudo tuned-adm profile myprofile
+tuned-adm active
+sudo tuned-adm verify
+```
+
+`include=` is the inheritance directive. A custom profile in `/etc/tuned/` with the same name as a shipped one takes precedence.
+
+### Verifying a profile is genuinely applied
+
+```bash
+tuned-adm active
+sudo tuned-adm verify
+systemctl is-active tuned
+systemctl is-enabled tuned
+cat /etc/tuned/active_profile
+```
+
+Spot-check individual values:
+
+```bash
+cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null
+sysctl vm.swappiness
+cat /sys/block/*/queue/scheduler
+```
+
+### Related: power profiles
+
+RHEL 9 and later also ship `power-profiles-daemon` on desktops, which conflicts with `tuned`. On a server install only `tuned` is present. If both are installed, they fight; `tuned` is the one RHCSA cares about.
+
+```bash
+systemctl status power-profiles-daemon 2>/dev/null
 ```
 
 ## Exam Tips

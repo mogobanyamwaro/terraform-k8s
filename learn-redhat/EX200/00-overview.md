@@ -195,7 +195,7 @@ Because EX200 is hands-on, these are **not** multiple-choice questions. Each fil
 
 **Do the practice tasks before reading the solutions.** Reading a solution feels like learning and is not. You are being graded on typing speed and muscle memory, not recognition.
 
-Files still being converted to this layout start with the old **Concept refresher** block at the top. Treat that as quick reference and skip to **Tasks** only after you have lab time — or wait for the follow-along section to land. `03-grep-regex.md` is the template.
+All numbered files **`02` through `35`** use this layout. `01-shell-fundamentals.md` still uses the older format until it is converted.
 
 ## Recommended Study Order
 

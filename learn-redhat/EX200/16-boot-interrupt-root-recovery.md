@@ -6,9 +6,29 @@
 
 You must do this from a **console**, not SSH. Set up console access in your lab now (`virsh console`, the VirtualBox window, or the VMware console).
 
-## Concept Refresher
+## Before You Start
 
-### The three ways in
+You need a running lab VM with **console access**. If you have not built one yet, do `Lab-Setup.md` first. Take a snapshot before the password-reset tasks.
+
+```bash
+vagrant ssh server1    # or ssh into your practice VM
+```
+
+**How to use this file:**
+
+1. **Follow Along** — work from the VM console. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+The six `rd.break` commands fit on an index card. Write them there and drill until they are muscle memory.
+
+---
+
+## Follow Along
+
+Work from your **VM console**, not SSH. After each step, compare your output to **You should see**.
+
+### 1. The three ways in
 
 | Method | Use when | Reboots needed |
 | --- | --- | :---: |
@@ -18,9 +38,11 @@ You must do this from a **console**, not SSH. Set up console access in your lab 
 
 Also relevant: emergency mode, which you land in involuntarily when `/etc/fstab` is broken.
 
-### Where you interrupt
+**You should see** `rd.break` as the default answer for a forgotten root password. The other methods are fallbacks.
 
-At the **GRUB menu**, which appears for a few seconds at boot.
+### 2. Where you interrupt — the GRUB menu
+
+At the **GRUB menu**, which appears for a few seconds at boot:
 
 ```text
 ┌──────────────────────────────────────────────────────┐
@@ -39,6 +61,10 @@ At the **GRUB menu**, which appears for a few seconds at boot.
 
 If the menu flashes past too fast, hold **`Shift`** during boot (BIOS) or press **`Esc`** repeatedly (UEFI). To make it stay longer for practice, see `17-bootloader.md`.
 
+**You should see** the menu if `GRUB_TIMEOUT` is set high enough. If not, adjust it in `17-bootloader.md` first.
+
+### 3. Edit the kernel line and boot once
+
 Inside the editor, find the line beginning **`linux`** (older systems: `linux16` or `linuxefi`). It looks like:
 
 ```text
@@ -51,7 +77,9 @@ You append your argument to **the end of that line**, then boot with **`Ctrl+x`*
 
 Edits made here are **temporary** — they apply to this boot only and are not written to disk. That is exactly what you want for a recovery.
 
-## Method 1: rd.break — The Standard Answer
+**You should see** the kernel line with your appended argument when you press `e`. Nothing is saved to disk until you edit `/etc/default/grub` and run `grub2-mkconfig`.
+
+### 4. `rd.break` — the standard answer
 
 This is the method to learn. Memorise the six commands.
 
@@ -98,7 +126,9 @@ The final `exit` leaves the initramfs shell and continues the boot. You can also
 
 The system then boots, relabels the filesystem (this takes a minute or two and prints progress), and **reboots again automatically**. After that second reboot, log in with the new password.
 
-### Why each step matters
+**You should see** a relabel progress display after the first reboot, then a second automatic reboot. After that, the new root password works.
+
+### 5. Why each `rd.break` step matters
 
 **`mount -o remount,rw /sysroot`** — `/sysroot` is read-only by default at this stage. Without this, `passwd` fails with a read-only filesystem error. This is the most commonly forgotten step.
 
@@ -125,9 +155,14 @@ sudo restorecon -v /etc/shadow
 sudo touch /.autorelabel && sudo reboot
 ```
 
-A faster alternative that avoids the relabel entirely: instead of `touch /.autorelabel`, run `restorecon` on just the file you changed. This is not possible inside the initramfs chroot on all builds, so `/.autorelabel` remains the reliable answer.
+**You should see** `shadow_t` on `/etc/shadow` after a successful relabel:
 
-### The whole thing, condensed
+```bash
+ls -Z /etc/shadow
+# system_u:object_r:shadow_t:s0 /etc/shadow
+```
+
+### 6. The whole sequence, condensed
 
 Write this on a card and drill it:
 
@@ -142,7 +177,9 @@ exit
 exit
 ```
 
-## Method 2: init=/bin/bash
+**You should see** this sequence become automatic after a few practice runs from the console.
+
+### 7. `init=/bin/bash` — the fallback
 
 An alternative worth knowing, especially if `rd.break` is not available.
 
@@ -175,7 +212,9 @@ reboot -f
 
 `rd.break` is cleaner. Use `init=/bin/bash` as a fallback.
 
-## Method 3: Booting To A Different Target
+**You should see** `mount | grep ' / '` showing `rw` before you run `passwd`.
+
+### 8. Boot to a different target from GRUB
 
 When you know the root password but the system will not reach a usable state.
 
@@ -200,7 +239,9 @@ systemctl daemon-reload
 reboot
 ```
 
-Other kernel arguments worth knowing:
+**You should see** a root password prompt, then a minimal shell. `systemctl default` continues the boot to the normal target without a reboot.
+
+### 9. Kernel arguments worth knowing
 
 | Argument | Effect |
 | --- | --- |
@@ -215,7 +256,9 @@ Other kernel arguments worth knowing:
 | `nomodeset` | Skip KMS, for graphics problems |
 | `systemd.debug-shell=1` | A root shell on tty9 |
 
-## Recovering From A Broken /etc/fstab
+**You should see** these as one-boot-only changes when typed at the GRUB menu. They are not written to disk.
+
+### 10. Recovering from a broken `/etc/fstab`
 
 This is the involuntary version, and it is the most likely way you will break your own exam machine.
 
@@ -274,29 +317,55 @@ UUID=...  /mnt/data  xfs     defaults,nofail  0 0
 
 `nofail` means a failed mount does not block the boot. Using it on a mount the grader checks is risky — the mount must still work — but on an ISO or a USB device it is correct practice.
 
-## Tasks
+**You should see** `findmnt --verify` report no errors and `mount -a` run silently before you reboot.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 Do all of these from a **VM console**. Take a snapshot first.
 
 **Task 1.** Make the GRUB menu wait 10 seconds so you have time to interrupt it, and remove the graphical boot splash so you can see boot messages.
 
+> Hint: edit `/etc/default/grub`, then regenerate `grub.cfg`. See `17-bootloader.md`.
+
 **Task 2.** Reset the root password on `server1` using `rd.break`, including the SELinux relabel step. Verify you can log in afterwards.
+
+> Hint: the six commands in order — `mount`, `chroot`, `passwd`, `touch`, `exit`, `exit`.
 
 **Task 3.** Reset the root password using `init=/bin/bash` instead, and exit cleanly.
 
+> Hint: append `rw init=/bin/bash` at GRUB; no chroot needed; use `exec /sbin/init` to hand over to systemd.
+
 **Task 4.** Boot the system directly into `rescue.target` from the GRUB menu.
+
+> Hint: append `systemd.unit=rescue.target` to the linux line.
 
 **Task 5.** Boot the system with SELinux in permissive mode for one boot only, without changing any file.
 
+> Hint: append `enforcing=0` at GRUB; check with `getenforce` after login.
+
 **Task 6.** Deliberately break `/etc/fstab` with a nonexistent device, reboot, and recover from emergency mode.
+
+> Hint: add a fake `/dev/sdzz` line, reboot, then `mount -o remount,rw /` before editing.
 
 **Task 7.** Explain what happens if you reset the root password with `rd.break` but forget `touch /.autorelabel`, and how you would recover.
 
+> Hint: SELinux context on `/etc/shadow`; boot with `enforcing=0`, then `restorecon`.
+
 **Task 8.** Explain what happens if you forget `chroot /sysroot`, and how you would notice.
+
+> Hint: `passwd` edits the initramfs copy; check `ls /sysroot/etc/shadow` before exiting.
 
 **Task 9.** After an unexplained boot failure, find out from the logs what failed, using the previous boot's journal.
 
+> Hint: `journalctl --list-boots`, then `-b -1`. Needs a persistent journal.
+
 **Task 10.** Add `nofail` to an optional mount so a missing device cannot prevent the system booting, and prove it works by removing the device.
+
+> Hint: add an ISO mount with `ro,nofail`; detach the ISO and reboot.
 
 ---
 
@@ -634,6 +703,180 @@ grep -E 'TIMEOUT|CMDLINE' /etc/default/grub
 **The temporary nature of GRUB edits is a feature.** You do not want a recovery argument baked into the boot configuration. If a task asks you to add a **permanent** kernel argument, that is `/etc/default/grub` plus `grub2-mkconfig`, or `grubby`. See `17-bootloader.md`.
 
 After any recovery, verify with a **normal reboot** that the system is genuinely fixed and not just working because of a temporary kernel argument.
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### The three ways in
+
+| Method | Use when | Reboots needed |
+| --- | --- | :---: |
+| **`rd.break`** | **Forgot the root password.** The standard RHEL answer | 2 |
+| `init=/bin/bash` | `rd.break` is unavailable or you need the real root filesystem | 2 |
+| `systemd.unit=rescue.target` | You know the root password but a service or target is broken | 1 |
+
+Also relevant: emergency mode, which you land in involuntarily when `/etc/fstab` is broken.
+
+### GRUB menu
+
+```text
+┌──────────────────────────────────────────────────────┐
+│  Red Hat Enterprise Linux (5.14.0-...) 10.0          │  <- highlight this
+│  Red Hat Enterprise Linux (0-rescue-...) 10.0        │
+│                                                      │
+│   Use the ↑ and ↓ keys to change the selection.      │
+│   Press 'e' to edit the selected item, or 'c' for a  │
+│   command prompt.                                    │
+└──────────────────────────────────────────────────────┘
+```
+
+- **`e`** — edit the selected entry. This is what you want.
+- `c` — a GRUB command prompt.
+- `Esc` — back to the menu.
+
+If the menu flashes past too fast, hold **`Shift`** during boot (BIOS) or press **`Esc`** repeatedly (UEFI).
+
+Inside the editor, find the line beginning **`linux`** (older systems: `linux16` or `linuxefi`):
+
+```text
+linux ($root)/vmlinuz-5.14.0-... root=/dev/mapper/rhel-root ro crashkernel=1G-4G:192M ...
+```
+
+Append your argument to **the end of that line**, then boot with **`Ctrl+x`**.
+
+**`Ctrl+x` boots. `Ctrl+c` gives a GRUB prompt. `Esc` discards your edit.**
+
+Edits made here are **temporary** — they apply to this boot only and are not written to disk.
+
+### Method 1: rd.break — The Standard Answer
+
+```text
+1. Reboot. At the GRUB menu, press 'e'
+2. Find the line starting with 'linux'
+3. Go to the END of that line (Ctrl+e, or End)
+4. Append:  rd.break
+   Optionally also remove 'rhgb quiet' so you can see what happens
+5. Press Ctrl+x to boot
+```
+
+At `switch_root:/#`:
+
+```bash
+mount -o remount,rw /sysroot
+chroot /sysroot
+passwd root
+touch /.autorelabel
+exit
+exit
+```
+
+Condensed card:
+
+```text
+GRUB -> e -> append rd.break -> Ctrl+x
+
+mount -o remount,rw /sysroot
+chroot /sysroot
+passwd root
+touch /.autorelabel
+exit
+exit
+```
+
+**Why each step matters:**
+
+- **`mount -o remount,rw /sysroot`** — without this, `passwd` fails on read-only.
+- **`chroot /sysroot`** — without this, `passwd` edits the initramfs copy and the change evaporates.
+- **`touch /.autorelabel`** — without this, SELinux blocks login even with the correct password.
+
+**If you forget `/.autorelabel`:** boot with `enforcing=0`, then `restorecon -v /etc/shadow`.
+
+### Method 2: init=/bin/bash
+
+```text
+At GRUB: press 'e', append to the linux line:
+
+  rw init=/bin/bash
+
+Ctrl+x
+```
+
+```bash
+passwd root
+touch /.autorelabel
+exec /sbin/init
+# or: mount -o remount,ro / && reboot -f
+```
+
+### Method 3: Booting To A Different Target
+
+```text
+At GRUB, press 'e' and append one of:
+
+  systemd.unit=rescue.target       minimal services, filesystems mounted
+  systemd.unit=emergency.target    only /, read-only
+  systemd.unit=multi-user.target   skip a broken graphical target
+  single                           equivalent to rescue
+
+Ctrl+x
+```
+
+```bash
+systemctl --failed
+journalctl -xb
+vi /etc/fstab
+systemctl daemon-reload
+reboot
+```
+
+### Kernel arguments
+
+| Argument | Effect |
+| --- | --- |
+| **`enforcing=0`** | Boot with SELinux permissive. Use when SELinux is blocking login |
+| `selinux=0` | Disable SELinux entirely. Requires a relabel to re-enable |
+| `rd.break` | Shell in the initramfs before switching root |
+| `init=/bin/bash` | Replace init with a shell |
+| `systemd.unit=X` | Boot to a specific target |
+| `single`, `s`, `1` | Rescue mode |
+| **`rw`** | Mount root read-write |
+| `ro` | Mount root read-only (the default) |
+| `nomodeset` | Skip KMS, for graphics problems |
+| `systemd.debug-shell=1` | A root shell on tty9 |
+
+### Recovering From A Broken /etc/fstab
+
+```text
+[FAILED] Failed to mount /mnt/data.
+You are in emergency mode...
+Give root password for maintenance:
+```
+
+```bash
+journalctl -xb | grep -i mount
+systemctl --failed
+cat /etc/fstab
+mount -o remount,rw /
+vi /etc/fstab
+findmnt --verify
+mount -a
+systemctl daemon-reload
+reboot
+```
+
+**Prevention:**
+
+```bash
+sudo cp /etc/fstab{,.bak}
+sudo findmnt --verify
+sudo mount -a && echo OK
+```
+
+```text
+/dev/sr0  /mnt/iso  iso9660  ro,nofail  0 0
+UUID=...  /mnt/data  xfs     defaults,nofail  0 0
+```
 
 ## Exam Tips
 

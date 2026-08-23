@@ -4,259 +4,303 @@
 
 You will edit `/etc/fstab`, `/etc/default/grub`, `/etc/chrony.conf`, `/etc/exports`, `/etc/sudoers.d/*`, and shell scripts. `vim` is the editor guaranteed to be present. You do not need to be a vim expert; you need about twenty keystrokes and the confidence not to get stuck in a mode.
 
-## Concept Refresher
+## Before You Start
 
-### The three modes
-
-```text
-                    ┌─────────────────┐
-        i, a, o, I, A, O │             │  Esc
-        ┌───────────►│  INSERT MODE    │───────┐
-        │            │  (type text)    │       │
-        │            └─────────────────┘       │
-        │                                      ▼
-┌───────┴─────────┐                    ┌─────────────────┐
-│  NORMAL MODE    │◄───────────────────│  NORMAL MODE    │
-│  (navigate,     │                    │  the default    │
-│   delete, yank) │       Esc          └─────────────────┘
-└───────┬─────────┘◄───────────────────────────┐
-        │                                      │
-        │  :  or  /                            │
-        │            ┌─────────────────┐       │
-        └───────────►│  COMMAND MODE   │───────┘
-                     │  (:w :q /search)│  Enter or Esc
-                     └─────────────────┘
-```
-
-**When in doubt, press `Esc`.** It always returns you to normal mode. Pressing `Esc` twice costs nothing.
-
-The most common beginner disaster is typing a `:wq` while still in insert mode, which inserts the literal text `:wq` into your `/etc/fstab`. Always `Esc` first.
-
-### The twenty keystrokes you actually need
-
-**Entering insert mode:**
-
-| Key | Action |
-| --- | --- |
-| **`i`** | Insert before the cursor |
-| `a` | Append after the cursor |
-| `I` | Insert at the **start of the line** |
-| **`A`** | Append at the **end of the line** |
-| **`o`** | Open a new line **below** and insert |
-| `O` | Open a new line **above** |
-
-`A` and `o` are the two that save the most time. Appending an option to an `fstab` line is `A`, and adding a new line is `o`.
-
-**Saving and quitting (from normal mode):**
-
-| Command | Action |
-| --- | --- |
-| **`:w`** | Write |
-| **`:q`** | Quit |
-| **`:wq`** | Write and quit |
-| **`:x`** | Write **if changed**, and quit. Same as `:wq` in practice |
-| **`:q!`** | **Quit, discarding changes** |
-| `:w!` | Force write, e.g. a read-only file you own |
-| `ZZ` | Write and quit (normal mode, no colon) |
-| `ZQ` | Quit without saving |
-
-**`:q!` is your escape hatch.** If you have made a mess of a system file, `:q!` abandons everything and you start again. Knowing this removes the fear that makes people slow.
-
-**Moving:**
-
-| Key | Action |
-| --- | --- |
-| `h j k l` | Left, down, up, right (arrows also work) |
-| `0` | Start of line |
-| `$` | End of line |
-| `w` / `b` | Forward / back one word |
-| **`gg`** | First line |
-| **`G`** | Last line |
-| **`:42`** or `42G` | Go to line 42 |
-| `Ctrl+f` / `Ctrl+b` | Page down / up |
-| `%` | Jump to the matching bracket |
-
-**Editing:**
-
-| Key | Action |
-| --- | --- |
-| **`x`** | Delete the character under the cursor |
-| **`dd`** | Delete (cut) the current line |
-| `3dd` | Delete three lines |
-| `dw` | Delete a word |
-| `D` | Delete to end of line |
-| **`yy`** | Yank (copy) the current line |
-| `3yy` | Yank three lines |
-| **`p`** / `P` | Paste after / before |
-| **`u`** | **Undo** |
-| **`Ctrl+r`** | **Redo** |
-| `.` | **Repeat the last change** |
-| `r<char>` | Replace one character |
-| `cw` | Change a word (delete it and enter insert) |
-| `C` | Change to end of line |
-| `J` | Join this line with the next |
-
-**`u` and `.` are the highest-value pair.** `u` undoes mistakes; `.` repeats a change, which is how you make the same edit on ten lines quickly.
-
-**Searching and replacing:**
-
-| Command | Action |
-| --- | --- |
-| **`/text`** | Search forward |
-| `?text` | Search backward |
-| **`n` / `N`** | Next / previous match |
-| **`:%s/old/new/g`** | Replace **every** occurrence in the file |
-| `:%s/old/new/gc` | Same, but **confirm** each one |
-| `:s/old/new/g` | Replace on the current line only |
-| `:10,20s/old/new/g` | Replace on lines 10-20 |
-| `:noh` | Clear search highlighting |
-
-`:%s/old/new/g` is the one to memorise. `%` means "all lines", `s` is substitute, `g` means "all matches on each line".
-
-**Useful settings, typed in command mode:**
-
-```vim
-:set number          " show line numbers   (:set nu)
-:set nonumber        " hide them
-:set paste           " stop auto-indent mangling pasted text
-:set nopaste
-:set list            " show tabs and line ends
-:syntax on
-:set hlsearch        " highlight search matches
-:set ic              " ignore case in searches
-```
-
-**`:set paste` before pasting a block into vim.** Without it, auto-indent turns a nicely formatted config into a diagonal staircase. This matters when you paste a multi-line script.
-
-### Visual mode: block editing
-
-Occasionally the fastest way to comment out several lines.
-
-```text
-v          character-wise visual
-V          LINE-wise visual
-Ctrl+v     BLOCK-wise visual
-```
-
-Comment out five lines:
-
-```text
-Ctrl+v          start block mode
-jjjj            select down five lines
-I               insert at the start of the block
-#               type the comment character
-Esc             applied to EVERY selected line
-```
-
-Uncomment:
-
-```text
-Ctrl+v   jjjj   x
-```
-
-Worth practising once. It is genuinely quicker than editing five lines individually, and it appears constantly when enabling or disabling config lines.
-
-### Editing multiple files
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
-vim file1 file2 file3
+vagrant ssh server1    # or ssh into your practice VM
 ```
 
-| Command | Action |
-| --- | --- |
-| `:n` | Next file |
-| `:prev` | Previous file |
-| `:args` | List the files |
-| `:e other` | Edit another file |
-| `:r other` | **Read another file's contents in** at the cursor |
-| `:r !command` | **Insert the output of a shell command** |
-| `:!command` | Run a shell command without leaving vim |
+**How to use this file:**
 
-`:r !command` is a genuine time-saver:
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
 
-```vim
-:r !blkid -s UUID -o value /dev/vdb1
+Twenty vim keystrokes cover almost every exam edit. Type them here before you need them under pressure.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. Three modes — and Esc is your friend
+
+```bash
+vim /tmp/vim-demo.txt
 ```
 
-That drops the UUID straight into your `fstab` line rather than making you transcribe 36 hex characters by hand. Transcription errors in UUIDs are a real cause of failed storage tasks.
+Type `i`, then `hello world`, then press **`Esc`**.
 
-### Recovering from a swap file
+**You should see** the text on screen. After `Esc`, keystrokes are commands, not characters.
 
-If vim crashed or you have the same file open twice, you get an `ATTENTION / swap file already exists` prompt.
+vim has **normal** (default), **insert** (typing), and **command** (`:` commands) modes. **When in doubt, press `Esc` twice.**
+
+### 2. Save and quit
+
+Still in vim from step 1 (or reopen the file):
 
 ```text
-(R)ecover     load the unsaved changes
-(D)elete it   discard the swap file and open normally
-(Q)uit
+:wq
 ```
 
-Then clean up:
-
 ```bash
-ls -a /etc/           # look for .fstab.swp
-sudo rm /etc/.fstab.swp
+cat /tmp/vim-demo.txt
 ```
 
-Do not ignore this. A stale swap file makes vim prompt every time you open the file, which is a distraction you do not need mid-exam.
+**You should see** `hello world` in the file.
 
-### Alternatives to vim
+`:wq` writes and quits. `:q!` quits **discarding** all changes — your escape hatch if you mangled a system file.
 
-You are not obliged to use vim. If `nano` is installed and you prefer it, use it — the exam grades the file, not the editor.
+### 3. Create a multi-line file from scratch
 
 ```bash
-sudo dnf install -y nano
-nano /etc/fstab
-# Ctrl+O write, Ctrl+X exit, Ctrl+K cut line, Ctrl+W search
+vim /tmp/practice.txt
 ```
 
-But **do not count on `nano` being installed**, and do not spend exam time installing it. Know enough vim to survive.
-
-For many exam edits you do not need an editor at all, and scripted edits are faster and less error-prone:
+```text
+i
+line one
+line two
+line three
+Esc
+:wq
+```
 
 ```bash
-# Append a line
-echo "UUID=$UUID /mnt/data xfs defaults 0 0" | sudo tee -a /etc/fstab
+cat /tmp/practice.txt
+wc -l /tmp/practice.txt
+```
 
-# Change a setting in place
-sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+**You should see** three lines. `i` enters insert mode before the cursor; `o` opens a new line below (also useful).
 
-# Write a whole file
-sudo tee /etc/yum.repos.d/local.repo <<'EOF'
-[local]
-name=Local
+### 4. Navigate and delete a line
+
+```bash
+vim /tmp/practice.txt
+```
+
+```text
+:2          (or 2G — go to line 2)
+dd          (delete the line)
+:wq
+```
+
+```bash
+cat /tmp/practice.txt
+```
+
+**You should see** `line two` is gone. Press `u` to undo if you delete the wrong line.
+
+`gg` jumps to the first line; `G` to the last; `:42` or `42G` to line 42.
+
+### 5. Search and replace in one command
+
+```bash
+vim /tmp/practice.txt
+```
+
+```text
+:%s/line/row/g
+:wq
+```
+
+```bash
+cat /tmp/practice.txt
+```
+
+**You should see** `row` instead of `line` everywhere. `%` = all lines, `s` = substitute, `g` = every match per line.
+
+Add `c` to confirm each: `:%s/line/row/gc`.
+
+### 6. Quit without saving
+
+```bash
+vim /tmp/practice.txt
+```
+
+```text
+i
+accidental edit
+Esc
+:q!
+```
+
+```bash
+cat /tmp/practice.txt
+```
+
+**You should see** the file unchanged — `:q!` discarded your edit.
+
+**Memorise `:q!`.** It removes the fear of breaking `/etc/fstab`.
+
+### 7. Visual block mode — comment many lines
+
+```bash
+cp /etc/fstab /tmp/fstab-demo
+vim /tmp/fstab-demo
+```
+
+```text
+gg
+Ctrl+v
+G
+I
+#
+Esc
+:wq
+```
+
+```bash
+grep -vc '^#' /tmp/fstab-demo
+```
+
+**You should see** zero or only blank non-comment lines. Block mode lets you insert `#` at the start of every selected line at once.
+
+To undo: `Ctrl+v`, `G`, `x`.
+
+### 8. Insert command output from inside vim
+
+```bash
+vim /tmp/date-demo.txt
+```
+
+```text
+:r !date
+:wq
+```
+
+```bash
+cat /tmp/date-demo.txt
+```
+
+**You should see** today's date as a line in the file. `:r !command` runs a shell command and inserts the output **below** the cursor.
+
+For UUIDs in fstab: `:r !findmnt -no UUID /` — no hand-typing 36 hex characters.
+
+### 9. Line numbers and jump to a line
+
+```bash
+vim /etc/services
+```
+
+```text
+:set number
+:10
+/ssh
+```
+
+Then `q` to quit without saving (or `:q!`).
+
+**You should see** line numbers and the search jump to an `ssh` entry. `:set nu` is shorthand for `:set number`.
+
+### 10. Edit without an editor — append with redirection
+
+```bash
+echo "# reviewed" >> /tmp/practice.txt
+tail -2 /tmp/practice.txt
+```
+
+**You should see** your comment at the end. For root-owned files, use `| sudo tee -a` from `02-redirection-pipes.md`.
+
+### 11. Edit without an editor — sed in place
+
+```bash
+cp /tmp/practice.txt /tmp/practice-sed.txt
+sed -i.bak 's/row/line/g' /tmp/practice-sed.txt
+diff /tmp/practice-sed.txt.bak /tmp/practice-sed.txt
+```
+
+**You should see** what changed. `sed -i.bak` edits in place and keeps `.bak` as a free undo.
+
+**Prefer `sed -i` and `tee` for simple, well-defined edits.** Use vim when you need to read and decide.
+
+### 12. Write a file with literal `$` characters
+
+```bash
+tee /tmp/repo-demo.repo <<'EOF'
+[sample]
+name=Sample $releasever repo
 baseurl=file:///mnt/iso/BaseOS
 enabled=1
 gpgcheck=0
 EOF
+cat /tmp/repo-demo.repo
 ```
 
-**Prefer `tee` and `sed -i` for simple, well-defined edits.** Use vim when you need to read the file and decide what to change. This mix is how experienced admins actually work, and it is faster under a clock.
+**You should see** `$releasever` written literally. **Quoted** `<<'EOF'` prevents bash from expanding `$variables`.
 
-## Tasks
+### Mini checkpoint
+
+Before the practice tasks, you should know:
+
+| Keystroke | Does |
+| --- | --- |
+| `i` | insert |
+| `Esc` | normal mode |
+| `:wq` | save and quit |
+| `:q!` | quit discarding |
+| `dd` | delete line |
+| `:%s/old/new/g` | replace all |
+| `:r !cmd` | insert command output |
+
+If any row is blank, re-run the step above that covers it.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Using vim, create `/tmp/practice.txt` containing five lines of text, then save and quit.
 
+> Hint: `i`, type lines, `Esc`, `:wq` from steps 1–3.
+
 **Task 2.** Open the file again, go to line 3, delete it, and save.
+
+> Hint: `:3` or `3G`, then `dd` — step 4.
 
 **Task 3.** In `/tmp/practice.txt`, replace every occurrence of the word `line` with `row`, in one command.
 
+> Hint: `:%s/line/row/g` from step 5.
+
 **Task 4.** Open `/tmp/practice.txt`, make several changes, then quit **discarding** all of them.
+
+> Hint: `:q!` from step 6.
 
 **Task 5.** Copy `/etc/fstab` to `/tmp/fstab-edit`, open it in vim, and comment out every line that is not already a comment, using visual block mode.
 
+> Hint: block mode sequence from step 7.
+
 **Task 6.** In vim, insert the output of `date` into `/tmp/practice.txt` at the end of the file.
+
+> Hint: `G` then `:r !date` from step 8.
 
 **Task 7.** Create `/tmp/uuid-test` in vim, and insert the UUID of your root filesystem using a shell command from inside vim.
 
+> Hint: `:r !findmnt -no UUID /` from step 8.
+
 **Task 8.** Turn on line numbers in vim and go directly to line 10 of `/etc/services`.
+
+> Hint: `:set number` and `:10` from step 9.
 
 **Task 9.** Without using an editor, append the line `# reviewed` to `/tmp/practice.txt`.
 
+> Hint: `echo ... >>` from step 10.
+
 **Task 10.** Without using an editor, change every occurrence of `row` back to `line` in `/tmp/practice.txt`, keeping a backup of the original.
+
+> Hint: `sed -i.bak` from step 11.
 
 **Task 11.** Create the multi-line file `/tmp/repo-sample.repo` in a single command, without an editor, with content that includes a `$` character written literally.
 
+> Hint: quoted heredoc `<<'EOF'` from step 12.
+
 **Task 12.** Search `/etc/ssh/sshd_config` inside vim for `PermitRootLogin`, and report the line number.
+
+> Hint: `:set nu` and `/PermitRootLogin` from step 9; or `grep -n` outside vim.
 
 ---
 
@@ -547,6 +591,236 @@ Also check for stale swap files before you finish:
 ```bash
 sudo find /etc -name '.*.swp' 2>/dev/null
 ```
+
+## Quick Reference
+
+Come back here when you need a keystroke you forgot — not before your first pass through Follow Along.
+
+### The three modes
+
+```text
+                    ┌─────────────────┐
+        i, a, o, I, A, O │             │  Esc
+        ┌───────────►│  INSERT MODE    │───────┐
+        │            │  (type text)    │       │
+        │            └─────────────────┘       │
+        │                                      ▼
+┌───────┴─────────┐                    ┌─────────────────┐
+│  NORMAL MODE    │◄───────────────────│  NORMAL MODE    │
+│  (navigate,     │                    │  the default    │
+│   delete, yank) │       Esc          └─────────────────┘
+└───────┬─────────┘◄───────────────────────────┐
+        │                                      │
+        │  :  or  /                            │
+        │            ┌─────────────────┐       │
+        └───────────►│  COMMAND MODE   │───────┘
+                     │  (:w :q /search)│  Enter or Esc
+                     └─────────────────┘
+```
+
+**When in doubt, press `Esc`.** It always returns you to normal mode. Pressing `Esc` twice costs nothing.
+
+The most common beginner disaster is typing a `:wq` while still in insert mode, which inserts the literal text `:wq` into your `/etc/fstab`. Always `Esc` first.
+
+### The twenty keystrokes you actually need
+
+**Entering insert mode:**
+
+| Key | Action |
+| --- | --- |
+| **`i`** | Insert before the cursor |
+| `a` | Append after the cursor |
+| `I` | Insert at the **start of the line** |
+| **`A`** | Append at the **end of the line** |
+| **`o`** | Open a new line **below** and insert |
+| `O` | Open a new line **above** |
+
+`A` and `o` are the two that save the most time. Appending an option to an `fstab` line is `A`, and adding a new line is `o`.
+
+**Saving and quitting (from normal mode):**
+
+| Command | Action |
+| --- | --- |
+| **`:w`** | Write |
+| **`:q`** | Quit |
+| **`:wq`** | Write and quit |
+| **`:x`** | Write **if changed**, and quit. Same as `:wq` in practice |
+| **`:q!`** | **Quit, discarding changes** |
+| `:w!` | Force write, e.g. a read-only file you own |
+| `ZZ` | Write and quit (normal mode, no colon) |
+| `ZQ` | Quit without saving |
+
+**`:q!` is your escape hatch.** If you have made a mess of a system file, `:q!` abandons everything and you start again. Knowing this removes the fear that makes people slow.
+
+**Moving:**
+
+| Key | Action |
+| --- | --- |
+| `h j k l` | Left, down, up, right (arrows also work) |
+| `0` | Start of line |
+| `$` | End of line |
+| `w` / `b` | Forward / back one word |
+| **`gg`** | First line |
+| **`G`** | Last line |
+| **`:42`** or `42G` | Go to line 42 |
+| `Ctrl+f` / `Ctrl+b` | Page down / up |
+| `%` | Jump to the matching bracket |
+
+**Editing:**
+
+| Key | Action |
+| --- | --- |
+| **`x`** | Delete the character under the cursor |
+| **`dd`** | Delete (cut) the current line |
+| `3dd` | Delete three lines |
+| `dw` | Delete a word |
+| `D` | Delete to end of line |
+| **`yy`** | Yank (copy) the current line |
+| `3yy` | Yank three lines |
+| **`p`** / `P` | Paste after / before |
+| **`u`** | **Undo** |
+| **`Ctrl+r`** | **Redo** |
+| `.` | **Repeat the last change** |
+| `r<char>` | Replace one character |
+| `cw` | Change a word (delete it and enter insert) |
+| `C` | Change to end of line |
+| `J` | Join this line with the next |
+
+**`u` and `.` are the highest-value pair.** `u` undoes mistakes; `.` repeats a change, which is how you make the same edit on ten lines quickly.
+
+**Searching and replacing:**
+
+| Command | Action |
+| --- | --- |
+| **`/text`** | Search forward |
+| `?text` | Search backward |
+| **`n` / `N`** | Next / previous match |
+| **`:%s/old/new/g`** | Replace **every** occurrence in the file |
+| `:%s/old/new/gc` | Same, but **confirm** each one |
+| `:s/old/new/g` | Replace on the current line only |
+| `:10,20s/old/new/g` | Replace on lines 10-20 |
+| `:noh` | Clear search highlighting |
+
+`:%s/old/new/g` is the one to memorise. `%` means "all lines", `s` is substitute, `g` means "all matches on each line".
+
+**Useful settings, typed in command mode:**
+
+```vim
+:set number          " show line numbers   (:set nu)
+:set nonumber        " hide them
+:set paste           " stop auto-indent mangling pasted text
+:set nopaste
+:set list            " show tabs and line ends
+:syntax on
+:set hlsearch        " highlight search matches
+:set ic              " ignore case in searches
+```
+
+**`:set paste` before pasting a block into vim.** Without it, auto-indent turns a nicely formatted config into a diagonal staircase. This matters when you paste a multi-line script.
+
+### Visual mode: block editing
+
+Occasionally the fastest way to comment out several lines.
+
+```text
+v          character-wise visual
+V          LINE-wise visual
+Ctrl+v     BLOCK-wise visual
+```
+
+Comment out five lines:
+
+```text
+Ctrl+v          start block mode
+jjjj            select down five lines
+I               insert at the start of the block
+#               type the comment character
+Esc             applied to EVERY selected line
+```
+
+Uncomment:
+
+```text
+Ctrl+v   jjjj   x
+```
+
+Worth practising once. It is genuinely quicker than editing five lines individually, and it appears constantly when enabling or disabling config lines.
+
+### Editing multiple files
+
+```bash
+vim file1 file2 file3
+```
+
+| Command | Action |
+| --- | --- |
+| `:n` | Next file |
+| `:prev` | Previous file |
+| `:args` | List the files |
+| `:e other` | Edit another file |
+| `:r other` | **Read another file's contents in** at the cursor |
+| `:r !command` | **Insert the output of a shell command** |
+| `:!command` | Run a shell command without leaving vim |
+
+`:r !command` is a genuine time-saver:
+
+```vim
+:r !blkid -s UUID -o value /dev/vdb1
+```
+
+That drops the UUID straight into your `fstab` line rather than making you transcribe 36 hex characters by hand. Transcription errors in UUIDs are a real cause of failed storage tasks.
+
+### Recovering from a swap file
+
+If vim crashed or you have the same file open twice, you get an `ATTENTION / swap file already exists` prompt.
+
+```text
+(R)ecover     load the unsaved changes
+(D)elete it   discard the swap file and open normally
+(Q)uit
+```
+
+Then clean up:
+
+```bash
+ls -a /etc/           # look for .fstab.swp
+sudo rm /etc/.fstab.swp
+```
+
+Do not ignore this. A stale swap file makes vim prompt every time you open the file, which is a distraction you do not need mid-exam.
+
+### Alternatives to vim
+
+You are not obliged to use vim. If `nano` is installed and you prefer it, use it — the exam grades the file, not the editor.
+
+```bash
+sudo dnf install -y nano
+nano /etc/fstab
+# Ctrl+O write, Ctrl+X exit, Ctrl+K cut line, Ctrl+W search
+```
+
+But **do not count on `nano` being installed**, and do not spend exam time installing it. Know enough vim to survive.
+
+For many exam edits you do not need an editor at all, and scripted edits are faster and less error-prone:
+
+```bash
+# Append a line
+echo "UUID=$UUID /mnt/data xfs defaults 0 0" | sudo tee -a /etc/fstab
+
+# Change a setting in place
+sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+
+# Write a whole file
+sudo tee /etc/yum.repos.d/local.repo <<'EOF'
+[local]
+name=Local
+baseurl=file:///mnt/iso/BaseOS
+enabled=1
+gpgcheck=0
+EOF
+```
+
+**Prefer `tee` and `sed -i` for simple, well-defined edits.** Use vim when you need to read the file and decide what to change. This mix is how experienced admins actually work, and it is faster under a clock.
 
 ## Exam Tips
 

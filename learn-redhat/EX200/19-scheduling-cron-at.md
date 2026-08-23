@@ -2,340 +2,203 @@
 
 **Objective:** Schedule tasks using `at` and `cron`. (RHEL 10 objectives also mention systemd timers.)
 
-## Concept Refresher
+## Before You Start
 
-### Which tool for which job
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
-| Tool | Use for | Persistent |
-| --- | --- | :---: |
-| **`crontab -e`** | **Recurring jobs owned by a user.** The usual exam answer | Yes |
-| `/etc/cron.d/*` | Recurring jobs deployed as files, with a user field | Yes |
-| `/etc/crontab` | System-wide, but avoid editing it directly | Yes |
-| `/etc/cron.{hourly,daily,weekly,monthly}/` | Drop a **script** in, no schedule syntax needed | Yes |
-| **`at`** | **A single job at a specific future time** | Yes |
-| `anacron` | Jobs that must run even if the machine was off | Yes |
-| **systemd timers** | The modern equivalent of cron, with dependency handling | Yes |
+```bash
+vagrant ssh server1    # or ssh into your practice VM
+```
 
-**"Schedule a recurring job" means cron. "Schedule a one-off job" means `at`.** Get that mapping right and most tasks are straightforward.
+**How to use this file:**
 
-### The crontab time fields
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+Reading every cron field upfront feels like learning. Typing them one at a time actually is.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. Which tool for which job
+
+| Tool | Use for |
+| --- | --- |
+| **`crontab -e`** | **Recurring jobs owned by a user** — the usual exam answer |
+| `/etc/cron.d/*` | Recurring jobs as files, with a user field |
+| **`at`** | **A single job at a specific future time** |
+| **systemd timers** | Modern equivalent of cron, with dependency handling |
+
+**"Schedule a recurring job" means cron. "Schedule a one-off job" means `at`.**
+
+Confirm cron is running:
+
+```bash
+systemctl is-active crond
+sudo tail -5 /var/log/cron
+```
+
+**You should see** `active` and recent `(root) CMD (...)` lines if jobs have run.
+
+### 2. Read the crontab time fields
 
 ```text
 ┌───────────── minute        (0-59)
 │ ┌─────────── hour          (0-23)
 │ │ ┌───────── day of month  (1-31)
-│ │ │ ┌─────── month         (1-12, or jan-dec)
-│ │ │ │ ┌───── day of week   (0-7, 0 and 7 are Sunday, or sun-sat)
+│ │ │ ┌─────── month         (1-12)
+│ │ │ │ ┌───── day of week   (0-7, 0 and 7 are Sunday)
 │ │ │ │ │
-* * * * *  command to execute
+* * * * *  command
 ```
 
-Special characters:
-
-| Syntax | Meaning |
-| --- | --- |
-| `*` | Every value |
-| `5` | Exactly 5 |
-| `1,15,30` | A list |
-| `1-5` | A range |
-| **`*/10`** | **Every 10 units** (step) |
-| `0-30/5` | Every 5 within a range |
-
-Examples worth being able to read and write instantly:
+Examples to read instantly:
 
 ```text
 30 2 * * *          02:30 every day
-0 */2 * * *         every 2 hours, on the hour
 */15 * * * *        every 15 minutes
 0 9 * * 1-5         09:00 Monday to Friday
 0 0 1 * *           midnight on the 1st of each month
-0 3 * * 0           03:00 every Sunday
-45 23 * * 6         23:45 every Saturday
-0 12 1,15 * *       noon on the 1st and 15th
-15 14 1 * *         14:15 on the 1st of every month
-0 22 * * 1-5        22:00 on weekdays
 ```
 
-Special strings, which replace all five fields:
+**Minute first, then hour.** `23 14 * * *` is 14:23, not 23:14.
 
-```text
-@reboot        once, at boot
-@yearly        0 0 1 1 *
-@annually      same
-@monthly       0 0 1 * *
-@weekly        0 0 * * 0
-@daily         0 0 * * *
-@midnight      same
-@hourly        0 * * * *
-```
-
-**One trap: if both day-of-month and day-of-week are specified (neither is `*`), cron runs when EITHER matches, not both.** So `0 0 13 * 5` runs on the 13th of every month **and** on every Friday. This is unintuitive and occasionally examined.
-
-### User crontabs
+### 3. User crontabs
 
 ```bash
-crontab -e                    # edit YOUR crontab
-crontab -l                    # list yours
-crontab -r                    # REMOVE yours entirely. No confirmation
-crontab -l -u alice           # list alice's         (root only)
-crontab -e -u alice           # edit alice's         (root only)
-crontab -r -u alice           # remove alice's       (root only)
-crontab myfile                # INSTALL a file as your crontab (replaces it)
-```
-
-**`crontab -r` deletes the whole crontab with no prompt.** The keys `r` and `e` are adjacent. Back up first:
-
-```bash
-crontab -l > ~/crontab.bak
-```
-
-User crontabs are stored in `/var/spool/cron/<username>`:
-
-```bash
+crontab -l
 sudo ls -l /var/spool/cron/
-sudo cat /var/spool/cron/alice
 ```
 
-**Do not edit those files directly** — `crontab -e` validates the syntax and signals crond. Reading them to verify is fine.
+**You should see** your crontab (or "no crontab") and spool files under `/var/spool/cron/<username>`.
 
-`crontab -e` uses `$EDITOR`, which may be `vi`. To use something else:
+Add a test entry non-interactively:
 
 ```bash
-EDITOR=vim crontab -e
-export EDITOR=vim              # for this session
+(crontab -l 2>/dev/null; echo "*/5 * * * * /usr/bin/date >> /tmp/cron-test.log 2>&1") | crontab -
+crontab -l
 ```
 
-### System crontabs have an extra field
+**You should see** the new line. **Always use absolute paths** and redirect output so failures are visible.
 
-`/etc/crontab` and files in `/etc/cron.d/` add a **user** field between the schedule and the command:
+Remove it when done:
+
+```bash
+crontab -l | grep -v cron-test | crontab -
+```
+
+### 4. The user-field trap in system crontabs
+
+`/etc/crontab` and `/etc/cron.d/*` add a **user** field between the schedule and the command:
 
 ```text
-# /etc/crontab and /etc/cron.d/*
 30 2 * * *  root  /usr/local/bin/backup.sh
-│                 │
-└─ 5 time fields  └─ command
-            └─ USER — present here, ABSENT in user crontabs
 ```
 
-```text
-# a user crontab from `crontab -e` — NO user field
-30 2 * * *  /usr/local/bin/backup.sh
-```
+User crontabs from `crontab -e` have **no user field**. Adding one to a personal crontab breaks it.
 
-**Adding a user field to a personal crontab breaks it**, because cron treats the username as the command. Omitting it in `/etc/cron.d/` breaks it too. This is the most common cron syntax error.
-
-Deploying via `/etc/cron.d/` is often cleaner than `crontab -e`, because it is a file you can write with `tee`:
+Deploy via `/etc/cron.d/`:
 
 ```bash
-sudo tee /etc/cron.d/backup <<'EOF'
-# Nightly backup at 02:30
-30 2 * * * root /usr/local/bin/backup.sh
+sudo tee /etc/cron.d/demo <<'EOF'
+# Demo job every hour
+0 * * * * root /usr/bin/logger "cron.d demo ran"
 EOF
-sudo chmod 644 /etc/cron.d/backup
+sudo chmod 644 /etc/cron.d/demo
 ```
 
-Files in `/etc/cron.d/` must be mode `644` and owned by root, and **the filename must not contain a dot**, following the same `run-parts` naming rules as `/etc/cron.daily/`.
+**You should see** the file is mode `644`, owned by root, and **the filename has no dot** — `run-parts` silently skips `demo.cron`.
 
-### The cron.daily style directories
-
-The simplest option when the exact time does not matter:
+### 5. cron.daily: simplest scheduling
 
 ```bash
-sudo tee /etc/cron.daily/myjob <<'EOF'
+sudo tee /etc/cron.daily/demo-daily <<'EOF'
 #!/bin/bash
-/usr/local/bin/mytask.sh
+/usr/bin/logger "cron.daily demo ran"
 EOF
-sudo chmod +x /etc/cron.daily/myjob
-```
-
-**The file must be executable and must have no dot in its name.** `run-parts` skips anything named `myjob.sh`. That silent skip catches people out.
-
-Test it the way cron would:
-
-```bash
+sudo chmod +x /etc/cron.daily/demo-daily
 sudo run-parts --test /etc/cron.daily
-sudo run-parts /etc/cron.daily
 ```
 
-The timing of these directories is governed by `anacron` via `/etc/anacrontab`:
+**You should see** `demo-daily` listed. The file must be **executable** and have **no dot in the name**.
 
-```bash
-cat /etc/anacrontab
-```
+### 6. Escape percent signs in crontabs
+
+In a crontab, `%` is special. This fails silently:
 
 ```text
-period  delay  job-id     command
-1       5      cron.daily     nice run-parts /etc/cron.daily
-7       25     cron.weekly    nice run-parts /etc/cron.weekly
-@monthly 45    cron.monthly   nice run-parts /etc/cron.monthly
+0 2 * * * /usr/bin/tar -czf /backup/data-$(date +%F).tar.gz /home
 ```
 
-**`anacron` runs missed jobs when the machine comes back up**, which plain cron does not. On a laptop or a VM that is often off, that is the difference between a backup happening and not happening. `START_HOURS_RANGE` in the same file limits when it may run.
-
-### The cron environment: the biggest source of failure
-
-cron runs with a **minimal environment**. A script that works in your shell can fail under cron for reasons that are invisible.
-
-```text
-PATH=/sbin:/bin:/usr/sbin:/usr/bin     <- very short
-SHELL=/bin/sh
-HOME=the user's home
-No .bashrc, no .bash_profile, no aliases, no functions
-```
-
-The three rules that avoid almost every cron failure:
-
-**1. Use absolute paths for everything.**
-
-```bash
-# fragile
-0 2 * * * backup.sh
-
-# correct
-0 2 * * * /usr/local/bin/backup.sh
-```
-
-Inside the script too:
-
-```bash
-/usr/bin/tar -czf /backup/data.tar.gz /home
-```
-
-Or set `PATH` at the top of the crontab:
-
-```text
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-```
-
-**2. Capture the output.** cron mails stdout and stderr to the user, and on a system without mail configured that output vanishes. Redirect it so you can debug:
-
-```text
-0 2 * * * /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1
-0 2 * * * /usr/local/bin/backup.sh > /dev/null 2>&1      # discard entirely
-```
-
-**3. Escape percent signs.** In a crontab, `%` is special (it separates the command from stdin). `date +%F` must be written `date +\%F`:
+This works:
 
 ```text
 0 2 * * * /usr/bin/tar -czf /backup/data-$(date +\%F).tar.gz /home
 ```
 
-Forgetting the backslash truncates the command at the `%`, and the failure is baffling until you know.
+**Prefer putting complex logic in a script** — no escaping needed, and you can test it by hand.
 
-### Debugging cron
-
-```bash
-sudo systemctl status crond
-sudo journalctl -u crond -f
-sudo journalctl -u crond --since today
-sudo tail -f /var/log/cron
-crontab -l
-sudo ls -l /var/spool/cron/
-```
-
-`/var/log/cron` and `journalctl -u crond` show that a job **ran**; they do not show its output unless you redirected it. Confirm with:
-
-```bash
-sudo grep CMD /var/log/cron | tail
-```
-
-### Access control
-
-```bash
-/etc/cron.allow      # if it EXISTS, only listed users may use cron
-/etc/cron.deny       # listed users may not
-/etc/at.allow
-/etc/at.deny
-```
-
-**The precedence rule: if `cron.allow` exists, `cron.deny` is ignored entirely** and only users in `cron.allow` may schedule jobs. root is always permitted.
-
-```bash
-# Allow only alice and bob to use cron
-sudo tee /etc/cron.allow <<'EOF'
-alice
-bob
-EOF
-
-# Or just deny carol
-echo carol | sudo tee -a /etc/cron.deny
-```
-
-Test:
-
-```bash
-sudo -u carol crontab -l
-# You (carol) are not allowed to use this program (crontab)
-```
-
-### at: one-off jobs
+### 7. at: one-off jobs
 
 ```bash
 sudo dnf install -y at
-sudo systemctl enable --now atd          # REQUIRED, or nothing runs
+sudo systemctl enable --now atd
+systemctl is-active atd
 ```
 
-**`atd` must be enabled and running.** Scheduling an `at` job on a system where `atd` is not active silently accomplishes nothing, and this is a genuine exam trap.
+Schedule non-interactively:
 
 ```bash
-at 14:30                                 # interactive; Ctrl+d to finish
-at 14:30 tomorrow
-at now + 5 minutes
-at now + 2 hours
-at midnight
-at teatime                               # 16:00
-at noon
-at 10:00 Aug 25 2026
-at -f /path/to/script.sh 14:30           # run a script file
-echo "/usr/local/bin/task.sh" | at 14:30 # non-interactive. Easiest
-
-atq                                      # list pending jobs (= at -l)
-atrm 3                                   # remove job 3   (= at -d 3)
-at -c 3                                  # show job 3's full contents
-batch                                    # run when load average drops below 0.8
-```
-
-The non-interactive form is the one to use under time pressure:
-
-```bash
-echo "/usr/bin/touch /tmp/at-ran" | at now + 1 minute
+echo "/usr/bin/touch /tmp/at-ran" | at now + 2 minutes
 atq
 ```
 
-`at` **captures your current environment** at scheduling time, unlike cron. That makes it more forgiving, but output still goes to mail, so redirect it:
+**You should see** a queued job. **`atd` must be enabled and running** — without it, jobs queue but never execute.
+
+After two minutes:
 
 ```bash
-echo "/usr/local/bin/task.sh >> /var/log/task.log 2>&1" | at 22:00
+ls -l /tmp/at-ran
+atq
 ```
 
-Job files live in `/var/spool/at/`:
+Inspect and remove:
 
 ```bash
-sudo ls -l /var/spool/at/
+at -c $(atq | awk '{print $1}' | head -1) | tail -10
+atrm $(atq | awk '{print $1}' | head -1)
 ```
 
-### systemd timers
-
-The modern alternative, and named explicitly in the RHEL 10 objectives. A timer needs **two units**: a `.service` describing what to do and a `.timer` describing when.
+### 8. Access control
 
 ```bash
-# The service — what to run
-sudo tee /etc/systemd/system/backup.service <<'EOF'
+ls /etc/cron.allow /etc/cron.deny 2>/dev/null
+```
+
+**If `/etc/cron.allow` exists, `/etc/cron.deny` is ignored entirely** and only listed users (plus root) may use cron.
+
+### 9. systemd timers: service + timer
+
+```bash
+sudo tee /etc/systemd/system/demo.service <<'EOF'
 [Unit]
-Description=Nightly backup
+Description=Demo oneshot service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/backup.sh
+ExecStart=/usr/bin/logger "systemd timer demo ran"
 EOF
 
-# The timer — when to run it
-sudo tee /etc/systemd/system/backup.timer <<'EOF'
+sudo tee /etc/systemd/system/demo.timer <<'EOF'
 [Unit]
-Description=Run backup daily at 02:30
+Description=Run demo every 15 minutes
 
 [Timer]
-OnCalendar=*-*-* 02:30:00
+OnCalendar=*:0/15
 Persistent=true
 
 [Install]
@@ -343,98 +206,112 @@ WantedBy=timers.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now backup.timer
+sudo systemctl enable --now demo.timer
+systemctl list-timers demo.timer
 ```
 
-**You enable the `.timer`, not the `.service`.** Enabling the service would run it at boot instead of on schedule. That is the number one systemd-timer mistake.
+**You should see** the next scheduled run. **Enable the `.timer`, not the `.service`.** Use **`WantedBy=timers.target`**, not `multi-user.target`.
 
-**`WantedBy=timers.target`**, not `multi-user.target`, in the `[Install]` section of a timer.
-
-**`Persistent=true`** makes the timer run a missed job after a reboot, the equivalent of what `anacron` does for cron.
+Validate calendar syntax:
 
 ```bash
-systemctl list-timers                    # all active timers, with next run time
-systemctl list-timers --all
-systemctl status backup.timer
-systemctl start backup.service           # test the SERVICE directly
-journalctl -u backup.service
+systemd-analyze calendar "*:0/15" --iterations=3
 ```
 
-`OnCalendar` syntax:
-
-```text
-OnCalendar=*-*-* 02:30:00            daily at 02:30
-OnCalendar=Mon..Fri 09:00            weekdays at 09:00
-OnCalendar=*-*-01 00:00:00           the 1st of each month
-OnCalendar=hourly
-OnCalendar=daily
-OnCalendar=weekly
-OnCalendar=*:0/15                    every 15 minutes
-OnCalendar=Sat *-*-* 03:00:00        Saturdays at 03:00
-```
-
-Validate the expression before trusting it:
+Clean up:
 
 ```bash
-systemd-analyze calendar "Mon..Fri 09:00"
-systemd-analyze calendar "*-*-* 02:30:00" --iterations=3
+sudo systemctl disable --now demo.timer
+sudo rm /etc/systemd/system/demo.{service,timer}
+sudo systemctl daemon-reload
 ```
 
-That prints the next occurrences, which is a much better check than waiting a day.
+### 10. Debug a cron failure
 
-Other timer options:
-
-```text
-OnBootSec=5min             5 minutes after boot
-OnUnitActiveSec=1h         1 hour after the unit last ran
-RandomizedDelaySec=300     spread load across machines
-AccuracySec=1s             default is 1min
+```bash
+sudo journalctl -u crond --since today | tail -10
+sudo grep CMD /var/log/cron | tail -5
 ```
 
-### cron versus systemd timers
+**You should see** that cron **ran** a job — but not its output unless you redirected it. The three fixes: absolute paths, explicit `cd` or absolute file references, and `>> /var/log/job.log 2>&1`.
 
-| | cron | systemd timer |
-| --- | --- | --- |
-| Setup | One line | Two unit files |
-| Logging | Mail, or your own redirect | **Automatically in the journal** |
-| Dependencies | None | `After=`, `Requires=` |
-| Missed runs | `anacron` only | **`Persistent=true`** |
-| Verify next run | Calculate it yourself | **`systemctl list-timers`** |
-| Resource limits | No | Yes, via `[Service]` |
+### Mini checkpoint
 
-On the exam, **use cron unless the task explicitly says systemd timer.** It is fewer steps and less to get wrong. Know timers because the objective mentions them and because `systemctl list-timers` is how you discover existing scheduled work.
+| Concept | Remember |
+| --- | --- |
+| Field order | minute, hour, day-of-month, month, day-of-week |
+| `*/15` | every 15 minutes |
+| `/etc/cron.d/*` | has USER field; no dot in filename; mode 644 |
+| `crontab -e` | no USER field |
+| `\%` in crontab | escape percent signs |
+| `atd` | must be enabled for `at` to work |
+| systemd timer | enable `.timer`, `WantedBy=timers.target`, `Persistent=true` |
 
-## Tasks
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** As user `alice`, schedule a job that writes the date to `/home/alice/date.log` every day at 14:23.
 
+> Hint: `sudo -u alice crontab -e` or pipe to `crontab -`; minute 23, hour 14.
+
 **Task 2.** List alice's scheduled jobs as root, without switching to her account.
+
+> Hint: `crontab -l -u alice`.
 
 **Task 3.** Schedule a job as root that runs `/usr/local/bin/cleanup.sh` every 15 minutes, discarding all output.
 
+> Hint: `*/15` in the minute field; `> /dev/null 2>&1`.
+
 **Task 4.** Schedule a job that runs at 03:00 on the first day of every month, logging its output to `/var/log/monthly.log`.
+
+> Hint: `0 3 1 * *`; do not also set day-of-week.
 
 **Task 5.** Schedule a job that creates a tar archive named with today's date, at 02:00 daily. The filename must include the date correctly.
 
+> Hint: escape `\%F` in crontab, or use a script.
+
 **Task 6.** Create a system-wide cron job as a file in `/etc/cron.d/` that runs a script hourly as the `apache` user.
+
+> Hint: USER field between schedule and command; chmod 644; no dot in filename.
 
 **Task 7.** Arrange for a script to run daily without specifying a time, using the simplest possible mechanism.
 
+> Hint: executable script in `/etc/cron.daily/`, no dot in name.
+
 **Task 8.** Schedule a one-off job to create `/tmp/at-test` five minutes from now. Verify it is queued, then verify it ran.
+
+> Hint: install and enable `atd` first; `echo "cmd" | at now + 5 minutes`.
 
 **Task 9.** List all pending `at` jobs, inspect the contents of one, then delete it.
 
+> Hint: `atq`, `at -c N`, `atrm N`.
+
 **Task 10.** Configure the system so that only users `alice` and `bob` may create cron jobs. Verify a third user is denied.
+
+> Hint: `/etc/cron.allow` overrides `cron.deny`.
 
 **Task 11.** Create a systemd timer that runs `/usr/local/bin/report.sh` every weekday at 09:00, and that catches up if the machine was off. Verify when it will next run.
 
+> Hint: follow-along step 9; `OnCalendar=Mon..Fri 09:00`, `Persistent=true`.
+
 **Task 12.** List every active systemd timer on the system with its next scheduled run.
+
+> Hint: `systemctl list-timers`.
 
 **Task 13.** A cron job appears in `crontab -l` but never produces output. Create this scenario with a script that works interactively but fails under cron, then diagnose and fix it.
 
+> Hint: follow-along step 10; redirect output to see the error.
+
 **Task 14.** Determine whether the `cron.daily` jobs ran today, and when.
 
+> Hint: `/var/spool/anacron/cron.daily`, `journalctl -u crond`.
+
 **Task 15.** Schedule a job to run once, at 22:00 tonight, using a script file rather than an inline command.
+
+> Hint: `at -f /path/to/script.sh 22:00`.
 
 ---
 
@@ -940,6 +817,205 @@ systemctl list-timers                  # timers still scheduled
 ```
 
 `at` jobs do survive a reboot, because they are files in `/var/spool/at/`. A job whose scheduled time passed while the machine was off runs when `atd` starts.
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### Which tool for which job
+
+| Tool | Use for | Persistent |
+| --- | --- | :---: |
+| **`crontab -e`** | **Recurring jobs owned by a user.** The usual exam answer | Yes |
+| `/etc/cron.d/*` | Recurring jobs deployed as files, with a user field | Yes |
+| `/etc/crontab` | System-wide, but avoid editing it directly | Yes |
+| `/etc/cron.{hourly,daily,weekly,monthly}/` | Drop a **script** in, no schedule syntax needed | Yes |
+| **`at`** | **A single job at a specific future time** | Yes |
+| `anacron` | Jobs that must run even if the machine was off | Yes |
+| **systemd timers** | The modern equivalent of cron, with dependency handling | Yes |
+
+### The crontab time fields
+
+```text
+┌───────────── minute        (0-59)
+│ ┌─────────── hour          (0-23)
+│ │ ┌───────── day of month  (1-31)
+│ │ │ ┌─────── month         (1-12, or jan-dec)
+│ │ │ │ ┌───── day of week   (0-7, 0 and 7 are Sunday, or sun-sat)
+│ │ │ │ │
+* * * * *  command to execute
+```
+
+Special characters:
+
+| Syntax | Meaning |
+| --- | --- |
+| `*` | Every value |
+| `5` | Exactly 5 |
+| `1,15,30` | A list |
+| `1-5` | A range |
+| **`*/10`** | **Every 10 units** (step) |
+| `0-30/5` | Every 5 within a range |
+
+Examples worth being able to read and write instantly:
+
+```text
+30 2 * * *          02:30 every day
+0 */2 * * *         every 2 hours, on the hour
+*/15 * * * *        every 15 minutes
+0 9 * * 1-5         09:00 Monday to Friday
+0 0 1 * *           midnight on the 1st of each month
+0 3 * * 0           03:00 every Sunday
+45 23 * * 6         23:45 every Saturday
+0 12 1,15 * *       noon on the 1st and 15th
+15 14 1 * *         14:15 on the 1st of every month
+0 22 * * 1-5        22:00 on weekdays
+```
+
+Special strings, which replace all five fields:
+
+```text
+@reboot        once, at boot
+@yearly        0 0 1 1 *
+@annually      same
+@monthly       0 0 1 * *
+@weekly        0 0 * * 0
+@daily         0 0 * * *
+@midnight      same
+@hourly        0 * * * *
+```
+
+**One trap: if both day-of-month and day-of-week are specified (neither is `*`), cron runs when EITHER matches, not both.** So `0 0 13 * 5` runs on the 13th of every month **and** on every Friday. This is unintuitive and occasionally examined.
+
+### User crontabs
+
+```bash
+crontab -e                    # edit YOUR crontab
+crontab -l                    # list yours
+crontab -r                    # REMOVE yours entirely. No confirmation
+crontab -l -u alice           # list alice's         (root only)
+crontab -e -u alice           # edit alice's         (root only)
+crontab -r -u alice           # remove alice's       (root only)
+crontab myfile                # INSTALL a file as your crontab (replaces it)
+```
+
+**`crontab -r` deletes the whole crontab with no prompt.** The keys `r` and `e` are adjacent. Back up first:
+
+```bash
+crontab -l > ~/crontab.bak
+```
+
+User crontabs are stored in `/var/spool/cron/<username>`:
+
+```bash
+sudo ls -l /var/spool/cron/
+sudo cat /var/spool/cron/alice
+```
+
+**Do not edit those files directly** — `crontab -e` validates the syntax and signals crond. Reading them to verify is fine.
+
+### System crontabs have an extra field
+
+```text
+# /etc/crontab and /etc/cron.d/*
+30 2 * * *  root  /usr/local/bin/backup.sh
+│                 │
+└─ 5 time fields  └─ command
+            └─ USER — present here, ABSENT in user crontabs
+```
+
+Deploying via `/etc/cron.d/`:
+
+```bash
+sudo tee /etc/cron.d/backup <<'EOF'
+# Nightly backup at 02:30
+30 2 * * * root /usr/local/bin/backup.sh
+EOF
+sudo chmod 644 /etc/cron.d/backup
+```
+
+Files in `/etc/cron.d/` must be mode `644` and owned by root, and **the filename must not contain a dot**.
+
+### The cron environment
+
+cron runs with a **minimal environment**:
+
+```text
+PATH=/sbin:/bin:/usr/sbin:/usr/bin     <- very short
+SHELL=/bin/sh
+HOME=the user's home
+No .bashrc, no .bash_profile, no aliases, no functions
+```
+
+Three rules that avoid almost every cron failure:
+
+1. **Use absolute paths for everything.**
+2. **Capture the output:** `>> /var/log/job.log 2>&1`
+3. **Escape percent signs:** `date +\%F` in crontab lines
+
+### at: one-off jobs
+
+```bash
+sudo dnf install -y at
+sudo systemctl enable --now atd          # REQUIRED, or nothing runs
+
+at 14:30                                 # interactive; Ctrl+d to finish
+at now + 5 minutes
+echo "/usr/local/bin/task.sh" | at 14:30 # non-interactive. Easiest
+
+atq                                      # list pending jobs (= at -l)
+atrm 3                                   # remove job 3   (= at -d 3)
+at -c 3                                  # show job 3's full contents
+batch                                    # run when load average drops below 0.8
+```
+
+### systemd timers
+
+A timer needs **two units**: a `.service` and a `.timer`.
+
+```bash
+sudo tee /etc/systemd/system/backup.service <<'EOF'
+[Unit]
+Description=Nightly backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup.sh
+EOF
+
+sudo tee /etc/systemd/system/backup.timer <<'EOF'
+[Unit]
+Description=Run backup daily at 02:30
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now backup.timer
+```
+
+**You enable the `.timer`, not the `.service`.** **`WantedBy=timers.target`**, not `multi-user.target`. **`Persistent=true`** catches up missed runs after downtime.
+
+```bash
+systemctl list-timers                    # all active timers, with next run time
+systemd-analyze calendar "Mon..Fri 09:00" --iterations=3
+```
+
+### Access control
+
+```bash
+/etc/cron.allow      # if it EXISTS, only listed users may use cron
+/etc/cron.deny       # listed users may not
+/etc/at.allow
+/etc/at.deny
+```
+
+**If `cron.allow` exists, `cron.deny` is ignored entirely.** root is always permitted.
 
 ## Exam Tips
 

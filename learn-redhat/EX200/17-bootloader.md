@@ -2,9 +2,31 @@
 
 **Objective:** Modify the system bootloader.
 
-## Concept Refresher
+GRUB is the gatekeeper between firmware and the kernel. On the exam, "modify the bootloader" means editing `/etc/default/grub` or using `grubby`, then regenerating the config — not hand-editing `grub.cfg`. Knowing the difference between a one-boot GRUB edit and a permanent change is what separates a correct answer from one that looks right but does nothing.
 
-### The files, and which one you edit
+## Before You Start
+
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
+
+```bash
+vagrant ssh server1    # or ssh into your practice VM
+```
+
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+Editing `/etc/default/grub` without running `grub2-mkconfig` is the classic trap. The file looks correct; the boot menu does not change.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. Which files you edit versus which are generated
 
 ```text
 /etc/default/grub                     <- YOU EDIT THIS
@@ -22,13 +44,27 @@
 
 **The rule: edit `/etc/default/grub`, then regenerate `grub.cfg`.** Editing `grub.cfg` directly works until the next kernel update regenerates it and discards your change.
 
-Determine your firmware type first, because it decides the output path:
+**You should see** `/etc/default/grub` as the only file you edit by hand for most tasks.
+
+### 2. Determine BIOS versus UEFI
 
 ```bash
 [ -d /sys/firmware/efi ] && echo UEFI || echo BIOS
 ```
 
-### Regenerating the configuration
+Then locate the config:
+
+```bash
+sudo find /boot -name grub.cfg
+readlink -f /etc/grub2.cfg        # BIOS
+readlink -f /etc/grub2-efi.cfg    # UEFI
+```
+
+**You should see** either `UEFI` or `BIOS`, and a path like `/boot/grub2/grub.cfg` or `/boot/efi/EFI/redhat/grub.cfg`.
+
+Determine your firmware type first, because it decides the output path for `grub2-mkconfig`.
+
+### 3. Regenerate the GRUB configuration
 
 ```bash
 # BIOS
@@ -44,19 +80,24 @@ If you are unsure, this works on either:
 sudo grub2-mkconfig -o "$(readlink -f /etc/grub2.cfg)"
 ```
 
-Or find it:
+**You should see** output like:
 
-```bash
-sudo find /boot -name grub.cfg
+```text
+Generating grub configuration file ...
+Found linux image: /boot/vmlinuz-5.14.0-427.el9.x86_64
+Found initrd image: /boot/initramfs-5.14.0-427.el9.x86_64.img
+done
 ```
 
 **Forgetting `grub2-mkconfig` is the classic failure.** You edit `/etc/default/grub`, reboot, and nothing changed — because `grub.cfg` still holds the old values.
 
-### /etc/default/grub settings
+### 4. Read `/etc/default/grub`
 
 ```bash
 cat /etc/default/grub
 ```
+
+**You should see** settings like:
 
 ```text
 GRUB_TIMEOUT=5
@@ -84,7 +125,27 @@ The ones that appear in tasks:
 
 Two arguments worth removing while you practise: **`rhgb`** (the graphical boot splash) and **`quiet`** (suppresses kernel messages). Without them you can see what the boot is actually doing, which makes `16-boot-interrupt-root-recovery.md` far easier.
 
-### grubby: the safer way to change kernel arguments
+### 5. Change the menu timeout permanently
+
+```bash
+sudo cp /etc/default/grub{,.bak}
+sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=10/' /etc/default/grub
+grep GRUB_TIMEOUT /etc/default/grub
+sudo grub2-mkconfig -o "$(readlink -f /etc/grub2.cfg)"
+sudo grep -m1 'set timeout' "$(readlink -f /etc/grub2.cfg)"
+```
+
+**You should see** `GRUB_TIMEOUT=10` in `/etc/default/grub` and `set timeout=10` in the generated `grub.cfg`.
+
+**Both steps are required.** Editing `/etc/default/grub` without regenerating changes nothing at boot.
+
+Also ensure the menu is actually displayed:
+
+```bash
+grep GRUB_TIMEOUT_STYLE /etc/default/grub      # should be 'menu', not 'hidden'
+```
+
+### 6. Use `grubby` for kernel arguments
 
 `grubby` edits the generated entries directly and correctly, without a full regeneration. On RHEL 8 and later with BLS enabled, this is often the preferred tool.
 
@@ -93,20 +154,21 @@ sudo grubby --info=ALL                          # every boot entry
 sudo grubby --default-kernel                    # which kernel boots by default
 sudo grubby --default-index
 sudo grubby --info=DEFAULT                      # details of the default entry
+```
 
+Add or remove arguments:
+
+```bash
 # Add an argument to ALL entries
-sudo grubby --update-kernel=ALL --args="quiet"
-
-# Add to the default entry only
-sudo grubby --update-kernel=DEFAULT --args="audit=1"
+sudo grubby --update-kernel=ALL --args="audit=1"
 
 # Remove an argument
 sudo grubby --update-kernel=ALL --remove-args="rhgb quiet"
 
-# Change the default kernel
-sudo grubby --set-default=/boot/vmlinuz-5.14.0-427.el9.x86_64
-sudo grubby --set-default-index=1
+sudo grubby --info=ALL | grep args
 ```
+
+**You should see** the argument appear in every entry's `args=` line.
 
 **`grubby --update-kernel=ALL --args="..."` is the fast, reliable way to add a persistent kernel argument.** It writes to `/boot/loader/entries/*.conf` and does not need `grub2-mkconfig`.
 
@@ -119,69 +181,106 @@ sudo sed -i 's/^GRUB_CMDLINE_LINUX="\(.*\)"/GRUB_CMDLINE_LINUX="\1 audit=1"/' /e
 
 For the exam, `grubby --update-kernel=ALL` plus an edit to `/etc/default/grub` covers you either way.
 
-### Kernels and boot entries
+### 7. Kernels and boot entries
 
 ```bash
-rpm -q kernel                         # all installed kernels
-uname -r                              # the running kernel
+rpm -q kernel
+uname -r
 ls /boot/vmlinuz-*
 ls /boot/loader/entries/
 sudo grubby --info=ALL | grep -E 'index|kernel|title'
-
-sudo dnf install kernel                # install the newest
-sudo dnf remove kernel-5.14.0-70.el9   # remove an old one
 ```
 
-RHEL keeps the last 3 kernels by default, controlled in `/etc/dnf/dnf.conf`:
+**You should see** `rpm -q kernel` listing installed packages, `uname -r` showing what is running now, and `grubby --default-kernel` showing what will boot next time. Those three can legitimately differ — for example just after a kernel update, before you reboot.
+
+RHEL keeps the last 3 kernels by default:
 
 ```bash
 grep installonly /etc/dnf/dnf.conf
 # installonly_limit=3
 ```
 
-### Reinstalling GRUB
-
-If the bootloader itself is damaged, for example after a disk clone or an MBR overwrite.
+Change the default boot entry:
 
 ```bash
-# BIOS: install to the disk's MBR, not a partition
-sudo grub2-install /dev/vda
-sudo grub2-mkconfig -o /boot/grub2/grub.cfg
-
-# UEFI: grub2-install is not used the same way.
-sudo dnf reinstall grub2-efi-x64 shim-x64
-sudo grub2-mkconfig -o /boot/efi/EFI/redhat/grub.cfg
+sudo grubby --default-index                   # note the current value
+sudo grubby --set-default-index=1
+sudo grubby --default-kernel                  # confirm it changed
+sudo grubby --set-default-index=0             # change it back
 ```
 
-**On BIOS, install to the whole disk (`/dev/vda`), not a partition (`/dev/vda1`).** The boot code goes in the MBR.
-
-On UEFI there is no MBR stage; the firmware loads `shim` and `grubx64.efi` from the EFI System Partition, so you reinstall the packages rather than running `grub2-install`. Check the EFI boot entries with:
+You can also set it by kernel path, which is clearer and less fragile than an index:
 
 ```bash
-sudo efibootmgr -v
+sudo grubby --set-default=/boot/vmlinuz-$(uname -r)
 ```
 
-### Setting a GRUB password
+### 8. Verify kernel arguments after reboot
+
+The authoritative check is what the running kernel actually received:
+
+```bash
+cat /proc/cmdline
+cat /proc/cmdline | tr ' ' '\n' | grep audit
+```
+
+Compare with what is configured:
+
+```bash
+sudo grubby --info=DEFAULT
+```
+
+**You should see** `/proc/cmdline` and `grubby --info=DEFAULT` agree. If `/proc/cmdline` lacks the argument but `grubby --info` shows it, you edited a non-default entry or forgot to regenerate.
+
+### 9. Set and remove a GRUB password
 
 Occasionally asked, since an unprotected GRUB menu means anyone with console access can reset the root password via `16-boot-interrupt-root-recovery.md`.
 
 ```bash
 sudo grub2-setpassword
-# prompts for a password, writes /boot/grub2/user.cfg
-sudo cat /boot/grub2/user.cfg          # contains GRUB2_PASSWORD=grub.pbkdf2...
+sudo ls -l /boot/grub2/user.cfg
+sudo cat /boot/grub2/user.cfg
 ```
 
-After this, editing a menu entry (`e`) or using the command line (`c`) requires the username `root` and that password. Booting an existing entry still works without it.
+**You should see** something like:
 
-To remove it:
+```text
+GRUB2_PASSWORD=grub.pbkdf2.sha512.10000.XXXX...
+```
+
+The password is stored as a PBKDF2 hash, not plaintext. Reboot and try pressing `e` at the menu — it now demands the username `root` and this password.
+
+**This is the countermeasure to the root password reset in `16-boot-interrupt-root-recovery.md`.** With a GRUB password set, someone with console access can still boot the existing entries but cannot add `rd.break`.
+
+Remove it in your lab when done:
 
 ```bash
 sudo rm -f /boot/grub2/user.cfg
 ```
 
-### Recovering a lost grub.cfg
+Do remove it in your lab, or you will be entering it every time you practise `16-boot-interrupt-root-recovery.md`.
 
-From a rescue environment or with the system running:
+### 10. Reinstall GRUB and recover a lost `grub.cfg`
+
+If the bootloader itself is damaged, for example after a disk clone or an MBR overwrite:
+
+```bash
+# BIOS: install to the disk's MBR, not a partition
+sudo grub2-install /dev/vda
+sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+```
+
+**On BIOS, install to the whole disk (`/dev/vda`), not a partition (`/dev/vda1`).** The boot code goes in the MBR.
+
+On UEFI there is no MBR stage; the firmware loads `shim` and `grubx64.efi` from the EFI System Partition:
+
+```bash
+sudo dnf reinstall grub2-efi-x64 shim-x64
+sudo grub2-mkconfig -o /boot/efi/EFI/redhat/grub.cfg
+sudo efibootmgr -v
+```
+
+Recovering a lost `grub.cfg` from a running system:
 
 ```bash
 sudo grub2-mkconfig -o /boot/grub2/grub.cfg
@@ -189,33 +288,65 @@ sudo grub2-mkconfig -o /boot/grub2/grub.cfg
 
 That regenerates it entirely from `/etc/default/grub`, `/etc/grub.d/`, and the installed kernels. Nothing needs to be preserved.
 
-## Tasks
+**You should see** `done` from `grub2-mkconfig`. `grub.cfg` holds nothing precious — it can be rebuilt at any time.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Determine whether this system boots via BIOS or UEFI, and identify the correct `grub.cfg` path.
 
+> Hint: `[ -d /sys/firmware/efi ]` and `find /boot -name grub.cfg`.
+
 **Task 2.** Change the GRUB menu timeout to 10 seconds and make the change permanent.
+
+> Hint: edit `GRUB_TIMEOUT` in `/etc/default/grub`, then `grub2-mkconfig`.
 
 **Task 3.** Remove the `rhgb` and `quiet` kernel arguments so boot messages are visible, applying the change to all existing boot entries and to future kernels.
 
+> Hint: `grubby --remove-args` for existing entries; edit `GRUB_CMDLINE_LINUX` for future kernels.
+
 **Task 4.** Add the kernel argument `audit=1` permanently to all boot entries.
+
+> Hint: `grubby --update-kernel=ALL --args="audit=1"` plus `/etc/default/grub`.
 
 **Task 5.** Verify that a kernel argument you added is actually in effect after a reboot.
 
+> Hint: `cat /proc/cmdline` is the authoritative answer.
+
 **Task 6.** List every installed kernel and identify which one boots by default.
+
+> Hint: `rpm -q kernel`, `uname -r`, and `grubby --default-kernel`.
 
 **Task 7.** Change the default boot entry to the second entry in the list, then change it back.
 
+> Hint: `grubby --set-default-index=1`, then set it back to `0`.
+
 **Task 8.** Show the full details of every GRUB boot entry.
+
+> Hint: `grubby --info=ALL`, or read `/boot/loader/entries/*.conf` directly.
 
 **Task 9.** Set a GRUB bootloader password, verify the file it created, and then remove it.
 
+> Hint: `grub2-setpassword` writes `/boot/grub2/user.cfg`.
+
 **Task 10.** Regenerate the GRUB configuration from scratch and confirm the new file contains your settings.
+
+> Hint: `grub2-mkconfig -o "$(readlink -f /etc/grub2.cfg)"`, then grep the output file.
 
 **Task 11.** Reinstall the GRUB bootloader to the primary disk on a BIOS system.
 
+> Hint: `grub2-install /dev/vda` — the whole disk, not a partition.
+
 **Task 12.** Determine how many old kernels the system is configured to retain.
 
+> Hint: `installonly_limit` in `/etc/dnf/dnf.conf`.
+
 **Task 13.** Add the kernel argument `systemd.unit=multi-user.target` permanently, then explain why `systemctl set-default` is the better way to achieve the same result.
+
+> Hint: compare where each change lives and whether new kernels inherit it.
 
 ---
 
@@ -574,6 +705,145 @@ cat /proc/cmdline                # what is running
 ```
 
 Those two agreeing is the definition of done.
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### The files, and which one you edit
+
+```text
+/etc/default/grub                     <- YOU EDIT THIS
+/etc/grub.d/                          <- scripts that generate the config
+      ├── 00_header
+      ├── 10_linux
+      └── 40_custom                   <- for hand-written menu entries
+
+/boot/grub2/grub.cfg                  <- GENERATED. BIOS systems. DO NOT EDIT
+/boot/efi/EFI/redhat/grub.cfg         <- GENERATED. UEFI systems. DO NOT EDIT
+/boot/loader/entries/*.conf           <- BLS entries, one per kernel (RHEL 8+)
+/etc/grub2.cfg                        -> symlink to the real grub.cfg
+/etc/grub2-efi.cfg                    -> symlink, UEFI
+```
+
+**The rule: edit `/etc/default/grub`, then regenerate `grub.cfg`.** Editing `grub.cfg` directly works until the next kernel update regenerates it and discards your change.
+
+```bash
+[ -d /sys/firmware/efi ] && echo UEFI || echo BIOS
+```
+
+### Regenerating the configuration
+
+```bash
+# BIOS
+sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+
+# UEFI
+sudo grub2-mkconfig -o /boot/efi/EFI/redhat/grub.cfg
+
+# Either firmware:
+sudo grub2-mkconfig -o "$(readlink -f /etc/grub2.cfg)"
+sudo find /boot -name grub.cfg
+```
+
+**Forgetting `grub2-mkconfig` is the classic failure.**
+
+### /etc/default/grub settings
+
+```bash
+cat /etc/default/grub
+```
+
+| Setting | Effect |
+| --- | --- |
+| **`GRUB_TIMEOUT`** | Seconds the menu waits. `0` hides it, `-1` waits forever |
+| `GRUB_TIMEOUT_STYLE` | `menu` shows it, `hidden` or `countdown` do not |
+| **`GRUB_CMDLINE_LINUX`** | **Kernel arguments appended to every entry** |
+| `GRUB_DEFAULT` | `saved`, or an index like `0`, or an entry title |
+| `GRUB_DISABLE_SUBMENU` | `true` flattens the menu |
+| `GRUB_TERMINAL_OUTPUT` | `console`, or `serial` for a serial console |
+| `GRUB_ENABLE_BLSCFG` | `true` uses BootLoaderSpec entries in `/boot/loader/entries/` |
+
+Remove **`rhgb`** and **`quiet`** while practising.
+
+### grubby: the safer way to change kernel arguments
+
+```bash
+sudo grubby --info=ALL
+sudo grubby --default-kernel
+sudo grubby --default-index
+sudo grubby --info=DEFAULT
+
+sudo grubby --update-kernel=ALL --args="quiet"
+sudo grubby --update-kernel=DEFAULT --args="audit=1"
+sudo grubby --update-kernel=ALL --remove-args="rhgb quiet"
+
+sudo grubby --set-default=/boot/vmlinuz-5.14.0-427.el9.x86_64
+sudo grubby --set-default-index=1
+```
+
+**`grubby --update-kernel=ALL --args="..."` is the fast, reliable way to add a persistent kernel argument.**
+
+For full coverage on future kernels too:
+
+```bash
+sudo grubby --update-kernel=ALL --args="audit=1"
+sudo sed -i 's/^GRUB_CMDLINE_LINUX="\(.*\)"/GRUB_CMDLINE_LINUX="\1 audit=1"/' /etc/default/grub
+```
+
+### Kernels and boot entries
+
+```bash
+rpm -q kernel
+uname -r
+ls /boot/vmlinuz-*
+ls /boot/loader/entries/
+sudo grubby --info=ALL | grep -E 'index|kernel|title'
+
+sudo dnf install kernel
+sudo dnf remove kernel-5.14.0-70.el9
+```
+
+```bash
+grep installonly /etc/dnf/dnf.conf
+# installonly_limit=3
+```
+
+### Reinstalling GRUB
+
+```bash
+# BIOS
+sudo grub2-install /dev/vda
+sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+
+# UEFI
+sudo dnf reinstall grub2-efi-x64 shim-x64
+sudo grub2-mkconfig -o /boot/efi/EFI/redhat/grub.cfg
+sudo efibootmgr -v
+```
+
+**On BIOS, install to the whole disk (`/dev/vda`), not a partition (`/dev/vda1`).**
+
+### Setting a GRUB password
+
+```bash
+sudo grub2-setpassword
+sudo cat /boot/grub2/user.cfg          # GRUB2_PASSWORD=grub.pbkdf2...
+sudo rm -f /boot/grub2/user.cfg        # remove
+```
+
+### Recovering a lost grub.cfg
+
+```bash
+sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+```
+
+### Authoritative verification
+
+```bash
+cat /proc/cmdline
+sudo grubby --info=DEFAULT
+```
 
 ## Exam Tips
 

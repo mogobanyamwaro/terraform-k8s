@@ -4,269 +4,252 @@
 
 A short objective with a small number of files, but it appears in almost every other task indirectly — NFS mounts, SSH targets, and chrony servers are all specified by name.
 
-## Concept Refresher
+## Before You Start
 
-### Setting the hostname
-
-```bash
-hostnamectl                                        # full status
-hostnamectl status                                 # same thing
-hostname                                           # just the name
-hostnamectl hostname                               # RHEL 9+ syntax
-sudo hostnamectl set-hostname server1.lab.example.com
-```
-
-```text
-$ hostnamectl
- Static hostname: server1.lab.example.com
-       Icon name: computer-vm
-         Chassis: vm
-      Machine ID: 8f3a...
-         Boot ID: 4b2c...
-  Virtualization: vmware
-Operating System: Red Hat Enterprise Linux 10.0 (Coughlan)
-     CPE OS Name: cpe:/o:redhat:enterprise_linux:10::baseos
-          Kernel: Linux 6.12.0-55.el10.x86_64
-    Architecture: x86-64
-```
-
-Three kinds of hostname exist:
-
-| Kind | Meaning | Stored |
-| --- | --- | --- |
-| **Static** | The persistent, configured name | **`/etc/hostname`** |
-| Transient | Set by DHCP or mDNS at runtime | Kernel only |
-| Pretty | A free-form label, e.g. "Doug's Laptop" | `/etc/machine-info` |
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
 ```bash
-sudo hostnamectl set-hostname server1.lab.example.com          # static (what you want)
-sudo hostnamectl set-hostname "Lab Server 1" --pretty
-sudo hostnamectl set-hostname server1 --transient
+vagrant ssh server1    # or ssh into your practice VM
 ```
 
-**`hostnamectl set-hostname` writes `/etc/hostname` and persists. The legacy `hostname foo` command changes the kernel only and is lost on reboot.** Same distinction as `ip addr add` versus `nmcli con mod`.
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+If `ping google.com` fails but `ping 8.8.8.8` works, that is DNS — not routing, not firewalld, not SELinux.
+
+---
+
+## Follow Along
+
+Work on your lab VM. After each step, compare your output to **You should see**.
+
+### 1. Check current hostname
 
 ```bash
+hostnamectl
+hostname
 cat /etc/hostname
 ```
 
-**Use the fully qualified name** when a task gives you one: `server1.lab.example.com`, not `server1`. And note that your shell prompt does not update until you start a new shell:
+**You should see** static hostname, chassis, OS version from `hostnamectl`, and the same name in `/etc/hostname`.
+
+**`/etc/hostname` is the persistent static hostname file.**
+
+### 2. Set the hostname persistently
 
 ```bash
-exec bash          # or just log out and back in
+sudo hostnamectl set-hostname server1.lab.example.com
+hostnamectl
+cat /etc/hostname
 ```
 
-### Name resolution order
+**You should see** the new FQDN in all three outputs.
 
-```text
-   getaddrinfo("server2.lab.example.com")
-              │
-   ┌──────────▼───────────────────────────────┐
-   │  /etc/nsswitch.conf                      │
-   │     hosts: files dns myhostname          │
-   └──────────┬───────────────────────────────┘
-              │
-      ┌───────▼────────┐   found?   ┌─────────┐
-      │  1. files      │──────yes──►│ ANSWER  │
-      │   /etc/hosts   │            └─────────┘
-      └───────┬────────┘
-              │ no
-      ┌───────▼────────┐   found?   ┌─────────┐
-      │  2. dns        │──────yes──►│ ANSWER  │
-      │ /etc/resolv.conf│           └─────────┘
-      └───────┬────────┘
-              │ no
-        ┌─────▼──────┐
-        │ NXDOMAIN   │
-        └────────────┘
-```
-
-**`/etc/hosts` is consulted before DNS.** That is what makes it a useful override, and also what makes a stale entry there so confusing to debug.
+**Use the fully qualified name** when a task gives you one. Your shell prompt will not update until a new shell:
 
 ```bash
-cat /etc/nsswitch.conf | grep '^hosts'
+exec bash
 ```
 
-```text
-hosts:      files dns myhostname
-```
-
-### /etc/hosts
+### 3. Examine /etc/hosts
 
 ```bash
-sudo vim /etc/hosts
+cat /etc/hosts
 ```
 
-```text
-127.0.0.1   localhost localhost.localdomain localhost4
-::1         localhost localhost.localdomain localhost6
-192.168.56.11  server1.lab.example.com server1
-192.168.56.12  server2.lab.example.com server2
-```
+**You should see** `127.0.0.1 localhost` lines and possibly entries mapping IPs to hostnames.
 
-Format: **IP address, then the canonical FQDN, then any short aliases**, whitespace separated.
+Format: **IP address, then canonical FQDN, then short aliases.** Never remove the `127.0.0.1 localhost` line.
+
+### 4. Add a hosts entry
 
 ```bash
 echo "192.168.56.12  server2.lab.example.com server2" | sudo tee -a /etc/hosts
-```
-
-**Put the FQDN first.** Some tools take the first name as canonical, and Kerberos and NFS in particular care. **Never remove the `127.0.0.1 localhost` line** — a great deal of software breaks without it.
-
-### /etc/resolv.conf
-
-```bash
-cat /etc/resolv.conf
-```
-
-```text
-# Generated by NetworkManager
-search lab.example.com
-nameserver 192.168.56.1
-nameserver 8.8.8.8
-```
-
-| Directive | Meaning |
-| --- | --- |
-| `nameserver` | A DNS server to query. **Up to three are used** |
-| `search` | Domains appended to unqualified names |
-| `domain` | A single search domain; superseded by `search` |
-| `options timeout:2` | Seconds before trying the next server |
-| `options rotate` | Round-robin across the servers |
-
-**This file is generated by NetworkManager. Editing it by hand is wrong — your changes will be overwritten.** Set DNS through the connection profile instead:
-
-```bash
-sudo nmcli con mod ens160 ipv4.dns "192.168.56.1 8.8.8.8"
-sudo nmcli con mod ens160 ipv4.dns-search lab.example.com
-sudo nmcli con up ens160
-cat /etc/resolv.conf                    # now reflects the profile
-```
-
-If a task truly requires a hand-managed `resolv.conf`, tell NetworkManager to leave it alone:
-
-```bash
-sudo nmcli con mod ens160 ipv4.ignore-auto-dns yes
-```
-
-or globally, in `/etc/NetworkManager/conf.d/90-dns-none.conf`:
-
-```ini
-[main]
-dns=none
-```
-
-then `systemctl reload NetworkManager`. **But the exam-correct answer is almost always to configure DNS via `nmcli`.**
-
-### Query tools
-
-```bash
-# The RIGHT tool for the exam: it uses nsswitch, so it sees /etc/hosts
-getent hosts server2.lab.example.com
-getent ahosts server2.lab.example.com          # all addresses, both families
-
-# DNS-only tools: they IGNORE /etc/hosts
-host server2.lab.example.com
-dig server2.lab.example.com
-dig +short server2.lab.example.com
-dig -x 192.168.56.12                           # reverse lookup
-nslookup server2.lab.example.com
-
-# Reverse lookups
-getent hosts 192.168.56.12
-host 192.168.56.12
-```
-
-**This distinction wins marks.** `getent hosts` follows `/etc/nsswitch.conf`, so it consults `/etc/hosts` and then DNS — exactly like a real application. `host` and `dig` talk to DNS servers directly and **never look at `/etc/hosts`**.
-
-So if `ping server2` works but `dig server2.lab.example.com` returns nothing, the name is resolving from `/etc/hosts` and there is no DNS record. That is not a fault if the task asked you to add a hosts entry.
-
-Install the tools if missing:
-
-```bash
-sudo dnf install -y bind-utils              # provides host, dig, nslookup
-```
-
-### Reading dig output
-
-```bash
-dig server2.lab.example.com
-```
-
-```text
-;; QUESTION SECTION:
-;server2.lab.example.com.	IN	A
-
-;; ANSWER SECTION:
-server2.lab.example.com. 3600 IN A	192.168.56.12
-
-;; Query time: 1 msec
-;; SERVER: 192.168.56.1#53(192.168.56.1) (UDP)
-```
-
-Things to notice: the **ANSWER SECTION** is the result, **SERVER** tells you which resolver replied, and `status: NXDOMAIN` in the header means the name does not exist. `dig +short` gives just the answer, which is what you want when checking quickly.
-
-### Troubleshooting resolution
-
-```bash
-# 1. Is there a resolver configured at all?
-cat /etc/resolv.conf
-
-# 2. Is the name in /etc/hosts?
-grep server2 /etc/hosts
-
-# 3. What does the system-level resolver return?
-getent hosts server2.lab.example.com
-
-# 4. What does DNS alone return?
-dig +short server2.lab.example.com
-
-# 5. Is the DNS server reachable?
-ping -c2 192.168.56.1
-dig @192.168.56.1 server2.lab.example.com
-
-# 6. Is the search domain being applied?
 getent hosts server2
 ```
 
-| Symptom | Cause |
-| --- | --- |
-| `getent` works, `dig` fails | Resolving from **`/etc/hosts`**; no DNS record |
-| `dig` works, `getent` fails | `/etc/nsswitch.conf` broken, or a bad `/etc/hosts` entry shadowing it |
-| Both fail, IP ping works | **No resolver, or the resolver is unreachable** |
-| FQDN works, short name fails | **Missing `search` domain** |
-| Slow lookups then success | The first `nameserver` is unreachable; it times out and falls through |
+**You should see** the new line resolve to `192.168.56.12`.
 
-## Tasks
+**Use `sudo tee -a`, not `sudo echo >>`.** The redirection happens in your unprivileged shell.
+
+### 5. Check name resolution order
+
+```bash
+grep '^hosts' /etc/nsswitch.conf
+```
+
+**You should see** `hosts:      files dns myhostname` (or similar).
+
+**`/etc/hosts` is consulted before DNS.** That is what makes it useful as an override.
+
+### 6. Verify with getent (the right tool)
+
+```bash
+getent hosts server2.lab.example.com
+getent hosts server2
+```
+
+**You should see** both the FQDN and short name resolve to `192.168.56.12`.
+
+**`getent hosts` follows `nsswitch.conf`** — the same path `ping`, `ssh`, and `mount` use.
+
+### 7. Contrast with dig (DNS only)
+
+```bash
+dig +short server2.lab.example.com
+host server2.lab.example.com
+```
+
+**You should see** no answer (NXDOMAIN) if there is no DNS record — even though `getent` worked from `/etc/hosts`.
+
+**`dig` and `host` ignore `/etc/hosts`.** NXDOMAIN from `dig` while `ping` works is normal when the name is in hosts.
+
+### 8. Configure DNS through nmcli
+
+Replace `ens160` with your active connection profile name:
+
+```bash
+sudo nmcli connection modify ens160 ipv4.dns "192.168.56.1 8.8.8.8"
+sudo nmcli connection modify ens160 ipv4.dns-search lab.example.com
+sudo nmcli connection up ens160
+cat /etc/resolv.conf
+```
+
+**You should see** `# Generated by NetworkManager` at the top, your nameservers, and `search lab.example.com`.
+
+**Never edit `/etc/resolv.conf` by hand** — NetworkManager regenerates it.
+
+### 9. Prove resolv.conf is overwritten
+
+```bash
+echo "nameserver 1.2.3.4" | sudo tee -a /etc/resolv.conf
+cat /etc/resolv.conf
+sudo nmcli connection up ens160
+cat /etc/resolv.conf
+```
+
+**You should see** your manual line disappear after reactivating the connection.
+
+This is a real exam trap. Configure DNS through the connection profile.
+
+### 10. Test the search domain
+
+```bash
+grep search /etc/resolv.conf
+getent hosts server2
+```
+
+**You should see** a search domain listed. With `search lab.example.com`, resolving `server2` tries `server2.lab.example.com`.
+
+**A missing search domain causes "FQDN works but short name fails".**
+
+### 11. Reverse lookup
+
+```bash
+getent hosts 192.168.56.12
+dig +short -x 192.168.56.12
+```
+
+**You should see** `getent` return the hostname from `/etc/hosts`. `dig -x` may return nothing if no PTR record exists in DNS.
+
+Both answers can be correct. **`getent hosts <ip>` reads `/etc/hosts` backwards.**
+
+### 12. Query a specific DNS server directly
+
+```bash
+dig @8.8.8.8 +short redhat.com
+```
+
+**You should see** an IP address returned, bypassing your local resolver configuration.
+
+**`dig @server` separates "my resolver is broken" from "the record does not exist".**
+
+### Mini checkpoint
+
+Before the practice tasks, you should be able to explain:
+
+| Concept | Key point |
+| --- | --- |
+| `hostnamectl set-hostname` | Persists to `/etc/hostname` |
+| `hostname NAME` | Kernel only; **does not persist** |
+| `/etc/hosts` format | IP, FQDN first, then aliases |
+| `nsswitch.conf` order | `files` before `dns` |
+| `getent hosts` | Uses nsswitch; sees `/etc/hosts` |
+| `dig` / `host` | DNS only; **ignore `/etc/hosts`** |
+| DNS configuration | `nmcli con mod ipv4.dns`, not `resolv.conf` |
+| `ipv4.dns-search` | Fixes unqualified short names |
+| `ping IP` works, `ping name` fails | **DNS problem** |
+
+If any row is blank in your head, re-run the step above that covers it.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Set this system's static hostname to `server1.lab.example.com` and confirm it took effect, including in a new shell.
 
+> Hint: `hostnamectl set-hostname`; use FQDN; `exec bash` for prompt.
+
 **Task 2.** Show all three kinds of hostname and identify which file stores the persistent one.
+
+> Hint: `hostnamectl --static`, `--transient`, `--pretty`; static is in `/etc/hostname`.
 
 **Task 3.** Demonstrate that the legacy `hostname` command does not persist, and contrast it with `hostnamectl`.
 
+> Hint: `hostname temporary-name` leaves `/etc/hostname` unchanged; reboot restores old name.
+
 **Task 4.** Add entries to `/etc/hosts` so that `server2.lab.example.com` and the short name `server2` both resolve to `192.168.56.12`.
+
+> Hint: `sudo tee -a`; FQDN before short alias.
 
 **Task 5.** Verify the new entry resolves, using a tool that consults `/etc/hosts`, and then with a tool that does not. Explain the difference.
 
+> Hint: `getent hosts` versus `dig +short`.
+
 **Task 6.** Configure `192.168.56.1` and `8.8.8.8` as the DNS servers and `lab.example.com` as the search domain, persistently and in the correct way.
+
+> Hint: follow-along step 8; `nmcli con mod ipv4.dns` and `ipv4.dns-search`.
 
 **Task 7.** Confirm that `/etc/resolv.conf` reflects the change, and explain why you must not edit that file directly.
 
+> Hint: "Generated by NetworkManager"; prove overwrite with step 9.
+
 **Task 8.** Show that the search domain works by resolving an unqualified short name.
+
+> Hint: `getent hosts server2` with `search` in resolv.conf.
 
 **Task 9.** Perform a reverse lookup of `192.168.56.12` two different ways.
 
+> Hint: `getent hosts <ip>` and `dig -x`.
+
 **Task 10.** Query a specific DNS server directly, bypassing `/etc/resolv.conf`.
+
+> Hint: `dig @192.168.56.1 name`.
 
 **Task 11.** Examine `/etc/nsswitch.conf` and explain the lookup order for hostnames.
 
+> Hint: `grep '^hosts'`; read left to right — files, dns, myhostname.
+
 **Task 12.** Diagnose this fault: `ping 8.8.8.8` succeeds but `ping google.com` reports "Name or service not known".
+
+> Hint: empty or broken `/etc/resolv.conf`; fix with nmcli.
 
 **Task 13.** Diagnose this fault: `ping server2.lab.example.com` works but `ping server2` fails.
 
+> Hint: missing search domain or missing short alias in hosts.
+
 **Task 14.** Configure the system so NetworkManager does not manage `/etc/resolv.conf`, then revert.
 
+> Hint: `dns=none` in `/etc/NetworkManager/conf.d/`; know it but prefer nmcli on the exam.
+
 **Task 15.** Verify hostname and resolution configuration survives a reboot.
+
+> Hint: hostname and hosts persist; DNS must be in the connection profile.
 
 ---
 
@@ -858,6 +841,240 @@ hostname -f                     # correct FQDN?
 cat /etc/resolv.conf            # nameservers still present?
 getent hosts <name>             # resolution still works?
 ```
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### Setting the hostname
+
+```bash
+hostnamectl                                        # full status
+hostnamectl status                                 # same thing
+hostname                                           # just the name
+hostnamectl hostname                               # RHEL 9+ syntax
+sudo hostnamectl set-hostname server1.lab.example.com
+```
+
+```text
+$ hostnamectl
+ Static hostname: server1.lab.example.com
+       Icon name: computer-vm
+         Chassis: vm
+      Machine ID: 8f3a...
+         Boot ID: 4b2c...
+  Virtualization: vmware
+Operating System: Red Hat Enterprise Linux 10.0 (Coughlan)
+     CPE OS Name: cpe:/o:redhat:enterprise_linux:10::baseos
+          Kernel: Linux 6.12.0-55.el10.x86_64
+    Architecture: x86-64
+```
+
+Three kinds of hostname exist:
+
+| Kind | Meaning | Stored |
+| --- | --- | --- |
+| **Static** | The persistent, configured name | **`/etc/hostname`** |
+| Transient | Set by DHCP or mDNS at runtime | Kernel only |
+| Pretty | A free-form label, e.g. "Doug's Laptop" | `/etc/machine-info` |
+
+```bash
+sudo hostnamectl set-hostname server1.lab.example.com          # static (what you want)
+sudo hostnamectl set-hostname "Lab Server 1" --pretty
+sudo hostnamectl set-hostname server1 --transient
+```
+
+**`hostnamectl set-hostname` writes `/etc/hostname` and persists. The legacy `hostname foo` command changes the kernel only and is lost on reboot.** Same distinction as `ip addr add` versus `nmcli con mod`.
+
+```bash
+cat /etc/hostname
+```
+
+**Use the fully qualified name** when a task gives you one: `server1.lab.example.com`, not `server1`. And note that your shell prompt does not update until you start a new shell:
+
+```bash
+exec bash          # or just log out and back in
+```
+
+### Name resolution order
+
+```text
+   getaddrinfo("server2.lab.example.com")
+              │
+   ┌──────────▼───────────────────────────────┐
+   │  /etc/nsswitch.conf                      │
+   │     hosts: files dns myhostname          │
+   └──────────┬───────────────────────────────┘
+              │
+      ┌───────▼────────┐   found?   ┌─────────┐
+      │  1. files      │──────yes──►│ ANSWER  │
+      │   /etc/hosts   │            └─────────┘
+      └───────┬────────┘
+              │ no
+      ┌───────▼────────┐   found?   ┌─────────┐
+      │  2. dns        │──────yes──►│ ANSWER  │
+      │ /etc/resolv.conf│           └─────────┘
+      └───────┬────────┘
+              │ no
+        ┌─────▼──────┐
+        │ NXDOMAIN   │
+        └────────────┘
+```
+
+**`/etc/hosts` is consulted before DNS.** That is what makes it a useful override, and also what makes a stale entry there so confusing to debug.
+
+```bash
+cat /etc/nsswitch.conf | grep '^hosts'
+```
+
+```text
+hosts:      files dns myhostname
+```
+
+### /etc/hosts
+
+```bash
+sudo vim /etc/hosts
+```
+
+```text
+127.0.0.1   localhost localhost.localdomain localhost4
+::1         localhost localhost.localdomain localhost6
+192.168.56.11  server1.lab.example.com server1
+192.168.56.12  server2.lab.example.com server2
+```
+
+Format: **IP address, then the canonical FQDN, then any short aliases**, whitespace separated.
+
+```bash
+echo "192.168.56.12  server2.lab.example.com server2" | sudo tee -a /etc/hosts
+```
+
+**Put the FQDN first.** Some tools take the first name as canonical, and Kerberos and NFS in particular care. **Never remove the `127.0.0.1 localhost` line** — a great deal of software breaks without it.
+
+### /etc/resolv.conf
+
+```bash
+cat /etc/resolv.conf
+```
+
+```text
+# Generated by NetworkManager
+search lab.example.com
+nameserver 192.168.56.1
+nameserver 8.8.8.8
+```
+
+| Directive | Meaning |
+| --- | --- |
+| `nameserver` | A DNS server to query. **Up to three are used** |
+| `search` | Domains appended to unqualified names |
+| `domain` | A single search domain; superseded by `search` |
+| `options timeout:2` | Seconds before trying the next server |
+| `options rotate` | Round-robin across the servers |
+
+**This file is generated by NetworkManager. Editing it by hand is wrong — your changes will be overwritten.** Set DNS through the connection profile instead:
+
+```bash
+sudo nmcli con mod ens160 ipv4.dns "192.168.56.1 8.8.8.8"
+sudo nmcli con mod ens160 ipv4.dns-search lab.example.com
+sudo nmcli con up ens160
+cat /etc/resolv.conf                    # now reflects the profile
+```
+
+If a task truly requires a hand-managed `resolv.conf`, tell NetworkManager to leave it alone:
+
+```bash
+sudo nmcli con mod ens160 ipv4.ignore-auto-dns yes
+```
+
+or globally, in `/etc/NetworkManager/conf.d/90-dns-none.conf`:
+
+```ini
+[main]
+dns=none
+```
+
+then `systemctl reload NetworkManager`. **But the exam-correct answer is almost always to configure DNS via `nmcli`.**
+
+### Query tools
+
+```bash
+# The RIGHT tool for the exam: it uses nsswitch, so it sees /etc/hosts
+getent hosts server2.lab.example.com
+getent ahosts server2.lab.example.com          # all addresses, both families
+
+# DNS-only tools: they IGNORE /etc/hosts
+host server2.lab.example.com
+dig server2.lab.example.com
+dig +short server2.lab.example.com
+dig -x 192.168.56.12                           # reverse lookup
+nslookup server2.lab.example.com
+
+# Reverse lookups
+getent hosts 192.168.56.12
+host 192.168.56.12
+```
+
+**This distinction wins marks.** `getent hosts` follows `/etc/nsswitch.conf`, so it consults `/etc/hosts` and then DNS — exactly like a real application. `host` and `dig` talk to DNS servers directly and **never look at `/etc/hosts`**.
+
+So if `ping server2` works but `dig server2.lab.example.com` returns nothing, the name is resolving from `/etc/hosts` and there is no DNS record. That is not a fault if the task asked you to add a hosts entry.
+
+Install the tools if missing:
+
+```bash
+sudo dnf install -y bind-utils              # provides host, dig, nslookup
+```
+
+### Reading dig output
+
+```bash
+dig server2.lab.example.com
+```
+
+```text
+;; QUESTION SECTION:
+;server2.lab.example.com.	IN	A
+
+;; ANSWER SECTION:
+server2.lab.example.com. 3600 IN A	192.168.56.12
+
+;; Query time: 1 msec
+;; SERVER: 192.168.56.1#53(192.168.56.1) (UDP)
+```
+
+Things to notice: the **ANSWER SECTION** is the result, **SERVER** tells you which resolver replied, and `status: NXDOMAIN` in the header means the name does not exist. `dig +short` gives just the answer, which is what you want when checking quickly.
+
+### Troubleshooting resolution
+
+```bash
+# 1. Is there a resolver configured at all?
+cat /etc/resolv.conf
+
+# 2. Is the name in /etc/hosts?
+grep server2 /etc/hosts
+
+# 3. What does the system-level resolver return?
+getent hosts server2.lab.example.com
+
+# 4. What does DNS alone return?
+dig +short server2.lab.example.com
+
+# 5. Is the DNS server reachable?
+ping -c2 192.168.56.1
+dig @192.168.56.1 server2.lab.example.com
+
+# 6. Is the search domain being applied?
+getent hosts server2
+```
+
+| Symptom | Cause |
+| --- | --- |
+| `getent` works, `dig` fails | Resolving from **`/etc/hosts`**; no DNS record |
+| `dig` works, `getent` fails | `/etc/nsswitch.conf` broken, or a bad `/etc/hosts` entry shadowing it |
+| Both fail, IP ping works | **No resolver, or the resolver is unreachable** |
+| FQDN works, short name fails | **Missing `search` domain** |
+| Slow lookups then success | The first `nameserver` is unreachable; it times out and falls through |
 
 ## Exam Tips
 

@@ -4,298 +4,205 @@
 
 A short topic with a small number of commands, and it appears on the exam regularly because it is quick to set and quick to grade. **The persistence trap is the same as everywhere else: `swapon` is temporary, an `/etc/fstab` entry is not.**
 
-## Concept Refresher
+## Before You Start
 
-### What swap is
+You need a running lab VM. If you have not built one yet, do `Lab-Setup.md` first.
 
-Swap is disk space the kernel uses when physical memory is under pressure — inactive pages are written out to free RAM. It is also where a hibernation image is stored.
+```bash
+vagrant ssh server1    # or ssh into your practice VM
+```
 
-Three forms, all equally valid:
+**Storage lessons need spare disks.** Your `server1` VM must have the three extra 2 GB disks described in `Lab-Setup.md`. Run `lsblk` — you should see unused disks (`sdb`, `sdc`, `sdd`) with no partitions and no mountpoints. **Never partition `/dev/sda` or `/dev/vda`** unless a task explicitly says so; it holds your OS.
 
-| Form | Created on | Typical use |
-| --- | --- | --- |
-| **Swap partition** | A partition with type 82/`swap` | The classic approach |
-| **Swap logical volume** | An LVM LV | **Easy to resize** |
-| **Swap file** | A file in a filesystem | Adding swap with no free partition |
+**How to use this file:**
+
+1. **Follow Along** — type every command in order. One idea per step. Do not skip ahead.
+2. **Practice Tasks** — try these yourself before reading Solutions. They are worded like the exam.
+3. **Quick Reference** — cheat sheet for review. Come back here after the follow-along, not before.
+
+---
+
+## Follow Along
+
+Work on **server1**. After each step, compare your output to **You should see**.
+
+### 1. See active swap
 
 ```bash
 swapon --show
-swapon -s
 free -h
-cat /proc/swaps
-```
-
-```text
-$ swapon --show
-NAME      TYPE      SIZE USED PRIO
-/dev/dm-1 partition   2G   0B   -2
-
-$ free -h
-               total        used        free      shared  buff/cache   available
-Mem:           1.7Gi       456Mi       812Mi       9.0Mi       604Mi       1.3Gi
-Swap:          2.0Gi          0B       2.0Gi
-```
-
-**`swapon --show` and `free -h` are the two verification commands.** `swapon --show` prints nothing at all when no swap is active, which is itself the answer.
-
-### The three-step recipe
-
-Whatever the underlying device, the sequence is identical:
-
-```bash
-# 1. Format it as swap
-sudo mkswap /dev/sdb2
-
-# 2. Activate it
-sudo swapon /dev/sdb2
-
-# 3. PERSIST it
-echo "UUID=$(sudo blkid -s UUID -o value /dev/sdb2)  none  swap  defaults  0 0" | sudo tee -a /etc/fstab
-sudo swapon --show
-```
-
-**`mkswap`, `swapon`, `/etc/fstab`. Three steps, and the third is where the marks are.**
-
-### The fstab line
-
-```text
-UUID=7d5e3a8b-...  none  swap  defaults  0 0
-        1            2      3      4     5 6
-```
-
-| # | Field | Value for swap |
-| --- | --- | --- |
-| 1 | Device | **`UUID=...`**, `LABEL=...`, `/dev/vg/lv`, or a file path |
-| 2 | Mount point | **`none`** or `swap` — swap has no mount point |
-| 3 | Type | **`swap`** |
-| 4 | Options | **`defaults`**, or `pri=10`, or `noauto` |
-| 5 | Dump | `0` |
-| 6 | fsck | `0` |
-
-**Field 2 is `none`.** Some documentation uses `swap`; both work and neither is a mount point. `0 0` for the last two fields.
-
-```bash
 grep -i swap /etc/fstab
 ```
 
-### Swap partition
+**You should see** existing swap (often an LVM LV on `rhel-swap`) and what `/etc/fstab` will activate at boot. **Empty `swapon --show` means no swap active.**
+
+### 2. Create a swap partition
 
 ```bash
-# Partition with type 82 / swap  (28-disks-partitions.md)
-sudo fdisk /dev/sdb
-#   n, Enter, Enter, +512M, t, <partition>, swap, w
-sudo partprobe /dev/sdb
 lsblk /dev/sdb
+sudo fdisk /dev/sdb
+```
 
+Add a 512 MiB partition, type `swap`, write, then:
+
+```bash
+sudo partprobe /dev/sdb
 sudo mkswap /dev/sdb2
 sudo swapon /dev/sdb2
 swapon --show
-echo "UUID=$(sudo blkid -s UUID -o value /dev/sdb2)  none  swap  defaults  0 0" | sudo tee -a /etc/fstab
 ```
 
-**The type code `82` (MBR) or `swap`/`19` (GPT) is not required by `mkswap`**, but tasks ask for it and it documents intent.
+**You should see** a new `partition` entry. **`mkswap`, not `mkfs`.**
 
-### Swap logical volume
+### 3. Persist swap in fstab
+
+```bash
+echo "UUID=$(sudo blkid -s UUID -o value /dev/sdb2)  none  swap  defaults  0 0" | sudo tee -a /etc/fstab
+grep swap /etc/fstab
+sudo swapoff /dev/sdb2
+sudo swapon -a
+swapon --show
+```
+
+**You should see** the device return after `swapon -a`. **Field 2 is `none`; field 3 is `swap`.** This is the swap equivalent of `mount -a`.
+
+### 4. Create swap on an LVM logical volume
 
 ```bash
 sudo lvcreate -n lv_swap -L 512M vg01
 sudo mkswap /dev/vg01/lv_swap
 sudo swapon /dev/vg01/lv_swap
 swapon --show
-echo "/dev/vg01/lv_swap  none  swap  defaults  0 0" | sudo tee -a /etc/fstab
 ```
 
-**Resizing a swap LV requires deactivating it first** — there is no `swap_growfs`:
+**You should see** `/dev/mapper/vg01-lv_swap`. **Prefer device path in fstab for LVM swap — `mkswap` generates a new UUID each time.**
 
-```bash
-sudo swapoff /dev/vg01/lv_swap
-sudo lvextend -L +512M /dev/vg01/lv_swap
-sudo mkswap /dev/vg01/lv_swap             # RE-FORMAT — this generates a NEW UUID
-sudo swapon /dev/vg01/lv_swap
-swapon --show
-```
-
-**`mkswap` generates a new UUID every time.** If `/etc/fstab` refers to the old one, the next boot fails to activate swap:
-
-```bash
-sudo blkid /dev/vg01/lv_swap
-grep swap /etc/fstab                      # do they match?
-```
-
-**Using the device path `/dev/vg01/lv_swap` in `/etc/fstab` avoids this entirely** for LVM swap, which is a good reason to prefer it here.
-
-### Swap file
-
-Useful when there is no free partition or disk.
+### 5. Create a swap file the reliable way
 
 ```bash
 sudo dd if=/dev/zero of=/swapfile bs=1M count=512 status=progress
-# or
-sudo fallocate -l 512M /swapfile           # instant, but see the note below
-
 sudo chmod 600 /swapfile
 sudo mkswap /swapfile
 sudo swapon /swapfile
 swapon --show
-echo "/swapfile  none  swap  defaults  0 0" | sudo tee -a /etc/fstab
 ```
 
-**Two requirements that catch people:**
+**You should see** `TYPE file`. **`dd` not `fallocate` on XFS; `chmod 600` is mandatory.**
 
-1. **`chmod 600` is mandatory.** `swapon` refuses a world-readable swap file, because its contents are memory:
-
-```text
-swapon: /swapfile: insecure permissions 0644, 0600 suggested.
-```
-
-2. **`fallocate` produces a sparse or preallocated file that XFS may reject.** `dd` always works:
-
-```text
-swapon: /swapfile: swapon failed: Invalid argument
-```
-
-**On XFS use `dd`, not `fallocate`.** It is slower but reliable, and on the exam reliability wins.
-
-**A swap file is referenced by path in `/etc/fstab`, not by UUID.**
-
-### Priority
+### 6. Set swap priority
 
 ```bash
-sudo swapon --show
+sudo swapoff /dev/sdb2
 sudo swapon -p 10 /dev/sdb2
-```
-
-```text
-NAME       TYPE      SIZE USED PRIO
-/dev/dm-1  partition   2G   0B   -2
-/dev/sdb2  partition 512M   0B   10
-```
-
-| Priority | Behaviour |
-| --- | --- |
-| Higher number | **Used first** |
-| Equal numbers | **Used in parallel, round-robin** |
-| Not specified | Negative, assigned automatically, decreasing |
-
-```text
-UUID=xxx  none  swap  pri=10  0 0
-UUID=yyy  none  swap  pri=10  0 0        # these two are striped
-UUID=zzz  none  swap  pri=1   0 0        # used only when the others are full
-```
-
-**Set equal priorities on devices of similar speed to get parallel use**, and a higher priority on faster storage. A task may ask for a specific priority; the option is `pri=N` in `/etc/fstab` and `-p N` on the command line.
-
-### Deactivating and removing
-
-```bash
-sudo swapoff /dev/sdb2                     # one device
-sudo swapoff -a                            # everything
-sudo swapon -a                             # activate everything in fstab
-```
-
-Removing swap completely, in order:
-
-```bash
-# 1. Remove the fstab entry FIRST
-sudo vim /etc/fstab
-sudo findmnt --verify
-
-# 2. Deactivate
-sudo swapoff /dev/sdb2
 swapon --show
-
-# 3. Then remove the device
-sudo lvremove /dev/vg01/lv_swap
-# or delete the partition (28-disks-partitions.md)
-# or: sudo rm -f /swapfile
 ```
 
-**`swapoff` needs enough free RAM to hold the pages currently swapped out.** On a busy machine it can take a while or fail with "Cannot allocate memory":
+**You should see** `PRIO 10`. **Higher number is used first; equal priorities stripe round-robin.**
+
+### 7. Resize swap on LVM
 
 ```bash
-free -h                                    # is there room for the swapped pages?
-sudo swapoff /dev/sdb2
+sudo swapoff /dev/vg01/lv_swap
+sudo lvextend -L 1G /dev/vg01/lv_swap
+sudo mkswap /dev/vg01/lv_swap
+sudo swapon /dev/vg01/lv_swap
+swapon --show
 ```
 
-### Swappiness
+**You should see** 1G size. **There is no online swap grow — swapoff, lvextend, mkswap, swapon. Do not use lvextend -r.**
+
+### 8. Set swappiness persistently
 
 ```bash
 cat /proc/sys/vm/swappiness
-sudo sysctl vm.swappiness                  # read
-sudo sysctl -w vm.swappiness=10            # RUNTIME ONLY
-```
-
-Persistent:
-
-```bash
 echo 'vm.swappiness = 10' | sudo tee /etc/sysctl.d/99-swappiness.conf
 sudo sysctl -p /etc/sysctl.d/99-swappiness.conf
-sudo sysctl vm.swappiness
 ```
 
-**`sysctl -w` does not persist; a file in `/etc/sysctl.d/` does.** Same pattern as everything else on this exam. Values run 0 to 200, with 60 the RHEL default; lower means swap less eagerly.
+**You should see** the value change. **`sysctl -w` alone does not persist.**
 
-Not a listed objective, but it is a plausible "configure swap" sub-task and the persistence mechanism is worth knowing.
-
-### How much swap
-
-Red Hat's recommendation for RHEL:
-
-| RAM | Swap (no hibernation) | With hibernation |
-| --- | --- | --- |
-| ≤ 2 GB | **2× RAM** | 3× RAM |
-| 2–8 GB | **Equal to RAM** | 2× RAM |
-| 8–64 GB | **At least 4 GB** | 1.5× RAM |
-| > 64 GB | **At least 4 GB** | Not recommended |
-
-**Follow the task's stated size.** This table matters only if a task says "according to Red Hat's recommendation", which is unusual. If it says "add 512 MiB of swap", add 512 MiB.
-
-### Verification
+### 9. Remove swap safely
 
 ```bash
-swapon --show
-free -h
-cat /proc/swaps
-grep -i swap /etc/fstab
-sudo blkid | grep -i swap
-lsblk -f | grep -i swap
-sudo findmnt --verify
-sudo swapoff -a && sudo swapon -a && swapon --show    # the real test
+sudo cp /etc/fstab /root/fstab.bak
+sudo sed -i '\|/dev/vg01/lv_swap|d' /etc/fstab
+sudo swapoff /dev/vg01/lv_swap
+sudo lvremove /dev/vg01/lv_swap
 ```
 
-**`swapoff -a` followed by `swapon -a` is the equivalent of `mount -a` for swap.** It proves the `/etc/fstab` entries work rather than that your manual `swapon` is still in effect.
+**You should see** the correct order: **fstab → swapoff → remove device.**
 
-## Tasks
+### Mini checkpoint
+
+Three steps: **`mkswap`**, **`swapon`**, **`/etc/fstab`**. Pre-reboot test: **`sudo swapoff -a && sudo swapon -a`**.
+
+---
+
+## Practice Tasks
+
+Do these **before** reading Solutions. If you are stuck for more than five minutes, peek at the hint — not the full answer.
 
 **Task 1.** Report all currently active swap devices with their sizes, types, and priorities, and the total swap the kernel sees.
 
+> Hint: swapon --show, free -h, cat /proc/swaps, grep swap /etc/fstab.
+
 **Task 2.** Create a 512 MiB partition of type Linux swap, format it, activate it, and make it persistent.
+
+> Hint: 512M partition type swap, mkswap, swapon, UUID line with none swap 0 0.
 
 **Task 3.** Verify the new swap survives a reboot.
 
+> Hint: swapoff -a; swapon -a; reboot; swapon --show.
+
 **Task 4.** Create a 512 MiB swap logical volume, activate it, and make it persistent.
+
+> Hint: lvcreate -L 512M, mkswap, swapon; device path in fstab survives mkswap.
 
 **Task 5.** Increase that swap logical volume to 1 GiB, non-destructively with respect to the rest of the system.
 
+> Hint: swapoff, lvextend, mkswap (new UUID!), swapon; update fstab if using UUID=.
+
 **Task 6.** Create a 512 MiB swap file at `/swapfile`, activate it, and make it persistent.
+
+> Hint: dd, chmod 600, mkswap, swapon; path in fstab not UUID.
 
 **Task 7.** Explain why `swapon` may refuse a swap file, and give two distinct causes.
 
+> Hint: chmod 600 and dd vs fallocate on XFS.
+
 **Task 8.** Configure two swap devices so that one is used before the other.
+
+> Hint: pri= in fstab or swapon -p; higher used first.
 
 **Task 9.** Configure two swap devices of equal speed so the kernel uses them in parallel.
 
+> Hint: Equal pri= values for parallel use.
+
 **Task 10.** Deactivate one swap device without rebooting, then reactivate it from `/etc/fstab`.
+
+> Hint: swapoff one device; swapon -a reactivates from fstab.
 
 **Task 11.** Completely remove a swap logical volume, in the correct order.
 
+> Hint: Remove fstab line before swapoff and lvremove.
+
 **Task 12.** Set the kernel's swappiness to 10 persistently.
+
+> Hint: File in /etc/sysctl.d/, not sysctl -w alone.
 
 **Task 13.** Diagnose: after a reboot, `swapon --show` shows less swap than expected.
 
+> Hint: Compare swapon --show to fstab and blkid UUIDs.
+
 **Task 14.** Diagnose: `swapoff` fails with "Cannot allocate memory".
 
+> Hint: Not enough RAM to swapoff — free memory or add temporary swap.
+
 **Task 15.** Verify every swap change survives a reboot.
+
+> Hint: swapon --show, grep fstab, swapoff -a; swapon -a before reboot.
+
+---
 
 ---
 
@@ -1339,6 +1246,271 @@ swapon --show
 grep -i swap /etc/fstab
 sudo swapoff -a && sudo swapon -a && swapon --show
 ```
+
+---
+
+## Quick Reference
+
+Come back here when you need a command you forgot — not before your first pass through Follow Along.
+
+### What swap is
+
+Swap is disk space the kernel uses when physical memory is under pressure — inactive pages are written out to free RAM. It is also where a hibernation image is stored.
+
+Three forms, all equally valid:
+
+| Form | Created on | Typical use |
+| --- | --- | --- |
+| **Swap partition** | A partition with type 82/`swap` | The classic approach |
+| **Swap logical volume** | An LVM LV | **Easy to resize** |
+| **Swap file** | A file in a filesystem | Adding swap with no free partition |
+
+```bash
+swapon --show
+swapon -s
+free -h
+cat /proc/swaps
+```
+
+```text
+$ swapon --show
+NAME      TYPE      SIZE USED PRIO
+/dev/dm-1 partition   2G   0B   -2
+
+$ free -h
+               total        used        free      shared  buff/cache   available
+Mem:           1.7Gi       456Mi       812Mi       9.0Mi       604Mi       1.3Gi
+Swap:          2.0Gi          0B       2.0Gi
+```
+
+**`swapon --show` and `free -h` are the two verification commands.** `swapon --show` prints nothing at all when no swap is active, which is itself the answer.
+
+### The three-step recipe
+
+Whatever the underlying device, the sequence is identical:
+
+```bash
+# 1. Format it as swap
+sudo mkswap /dev/sdb2
+
+# 2. Activate it
+sudo swapon /dev/sdb2
+
+# 3. PERSIST it
+echo "UUID=$(sudo blkid -s UUID -o value /dev/sdb2)  none  swap  defaults  0 0" | sudo tee -a /etc/fstab
+sudo swapon --show
+```
+
+**`mkswap`, `swapon`, `/etc/fstab`. Three steps, and the third is where the marks are.**
+
+### The fstab line
+
+```text
+UUID=7d5e3a8b-...  none  swap  defaults  0 0
+        1            2      3      4     5 6
+```
+
+| # | Field | Value for swap |
+| --- | --- | --- |
+| 1 | Device | **`UUID=...`**, `LABEL=...`, `/dev/vg/lv`, or a file path |
+| 2 | Mount point | **`none`** or `swap` — swap has no mount point |
+| 3 | Type | **`swap`** |
+| 4 | Options | **`defaults`**, or `pri=10`, or `noauto` |
+| 5 | Dump | `0` |
+| 6 | fsck | `0` |
+
+**Field 2 is `none`.** Some documentation uses `swap`; both work and neither is a mount point. `0 0` for the last two fields.
+
+```bash
+grep -i swap /etc/fstab
+```
+
+### Swap partition
+
+```bash
+# Partition with type 82 / swap  (28-disks-partitions.md)
+sudo fdisk /dev/sdb
+#   n, Enter, Enter, +512M, t, <partition>, swap, w
+sudo partprobe /dev/sdb
+lsblk /dev/sdb
+
+sudo mkswap /dev/sdb2
+sudo swapon /dev/sdb2
+swapon --show
+echo "UUID=$(sudo blkid -s UUID -o value /dev/sdb2)  none  swap  defaults  0 0" | sudo tee -a /etc/fstab
+```
+
+**The type code `82` (MBR) or `swap`/`19` (GPT) is not required by `mkswap`**, but tasks ask for it and it documents intent.
+
+### Swap logical volume
+
+```bash
+sudo lvcreate -n lv_swap -L 512M vg01
+sudo mkswap /dev/vg01/lv_swap
+sudo swapon /dev/vg01/lv_swap
+swapon --show
+echo "/dev/vg01/lv_swap  none  swap  defaults  0 0" | sudo tee -a /etc/fstab
+```
+
+**Resizing a swap LV requires deactivating it first** — there is no `swap_growfs`:
+
+```bash
+sudo swapoff /dev/vg01/lv_swap
+sudo lvextend -L +512M /dev/vg01/lv_swap
+sudo mkswap /dev/vg01/lv_swap             # RE-FORMAT — this generates a NEW UUID
+sudo swapon /dev/vg01/lv_swap
+swapon --show
+```
+
+**`mkswap` generates a new UUID every time.** If `/etc/fstab` refers to the old one, the next boot fails to activate swap:
+
+```bash
+sudo blkid /dev/vg01/lv_swap
+grep swap /etc/fstab                      # do they match?
+```
+
+**Using the device path `/dev/vg01/lv_swap` in `/etc/fstab` avoids this entirely** for LVM swap, which is a good reason to prefer it here.
+
+### Swap file
+
+Useful when there is no free partition or disk.
+
+```bash
+sudo dd if=/dev/zero of=/swapfile bs=1M count=512 status=progress
+# or
+sudo fallocate -l 512M /swapfile           # instant, but see the note below
+
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+swapon --show
+echo "/swapfile  none  swap  defaults  0 0" | sudo tee -a /etc/fstab
+```
+
+**Two requirements that catch people:**
+
+1. **`chmod 600` is mandatory.** `swapon` refuses a world-readable swap file, because its contents are memory:
+
+```text
+swapon: /swapfile: insecure permissions 0644, 0600 suggested.
+```
+
+2. **`fallocate` produces a sparse or preallocated file that XFS may reject.** `dd` always works:
+
+```text
+swapon: /swapfile: swapon failed: Invalid argument
+```
+
+**On XFS use `dd`, not `fallocate`.** It is slower but reliable, and on the exam reliability wins.
+
+**A swap file is referenced by path in `/etc/fstab`, not by UUID.**
+
+### Priority
+
+```bash
+sudo swapon --show
+sudo swapon -p 10 /dev/sdb2
+```
+
+```text
+NAME       TYPE      SIZE USED PRIO
+/dev/dm-1  partition   2G   0B   -2
+/dev/sdb2  partition 512M   0B   10
+```
+
+| Priority | Behaviour |
+| --- | --- |
+| Higher number | **Used first** |
+| Equal numbers | **Used in parallel, round-robin** |
+| Not specified | Negative, assigned automatically, decreasing |
+
+```text
+UUID=xxx  none  swap  pri=10  0 0
+UUID=yyy  none  swap  pri=10  0 0        # these two are striped
+UUID=zzz  none  swap  pri=1   0 0        # used only when the others are full
+```
+
+**Set equal priorities on devices of similar speed to get parallel use**, and a higher priority on faster storage. A task may ask for a specific priority; the option is `pri=N` in `/etc/fstab` and `-p N` on the command line.
+
+### Deactivating and removing
+
+```bash
+sudo swapoff /dev/sdb2                     # one device
+sudo swapoff -a                            # everything
+sudo swapon -a                             # activate everything in fstab
+```
+
+Removing swap completely, in order:
+
+```bash
+# 1. Remove the fstab entry FIRST
+sudo vim /etc/fstab
+sudo findmnt --verify
+
+# 2. Deactivate
+sudo swapoff /dev/sdb2
+swapon --show
+
+# 3. Then remove the device
+sudo lvremove /dev/vg01/lv_swap
+# or delete the partition (28-disks-partitions.md)
+# or: sudo rm -f /swapfile
+```
+
+**`swapoff` needs enough free RAM to hold the pages currently swapped out.** On a busy machine it can take a while or fail with "Cannot allocate memory":
+
+```bash
+free -h                                    # is there room for the swapped pages?
+sudo swapoff /dev/sdb2
+```
+
+### Swappiness
+
+```bash
+cat /proc/sys/vm/swappiness
+sudo sysctl vm.swappiness                  # read
+sudo sysctl -w vm.swappiness=10            # RUNTIME ONLY
+```
+
+Persistent:
+
+```bash
+echo 'vm.swappiness = 10' | sudo tee /etc/sysctl.d/99-swappiness.conf
+sudo sysctl -p /etc/sysctl.d/99-swappiness.conf
+sudo sysctl vm.swappiness
+```
+
+**`sysctl -w` does not persist; a file in `/etc/sysctl.d/` does.** Same pattern as everything else on this exam. Values run 0 to 200, with 60 the RHEL default; lower means swap less eagerly.
+
+Not a listed objective, but it is a plausible "configure swap" sub-task and the persistence mechanism is worth knowing.
+
+### How much swap
+
+Red Hat's recommendation for RHEL:
+
+| RAM | Swap (no hibernation) | With hibernation |
+| --- | --- | --- |
+| ≤ 2 GB | **2× RAM** | 3× RAM |
+| 2–8 GB | **Equal to RAM** | 2× RAM |
+| 8–64 GB | **At least 4 GB** | 1.5× RAM |
+| > 64 GB | **At least 4 GB** | Not recommended |
+
+**Follow the task's stated size.** This table matters only if a task says "according to Red Hat's recommendation", which is unusual. If it says "add 512 MiB of swap", add 512 MiB.
+
+### Verification
+
+```bash
+swapon --show
+free -h
+cat /proc/swaps
+grep -i swap /etc/fstab
+sudo blkid | grep -i swap
+lsblk -f | grep -i swap
+sudo findmnt --verify
+sudo swapoff -a && sudo swapon -a && swapon --show    # the real test
+```
+
+**`swapoff -a` followed by `swapon -a` is the equivalent of `mount -a` for swap.** It proves the `/etc/fstab` entries work rather than that your manual `swapon` is still in effect.
 
 ## Exam Tips
 
