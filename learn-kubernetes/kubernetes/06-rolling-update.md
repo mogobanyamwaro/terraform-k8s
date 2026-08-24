@@ -18,8 +18,9 @@
 # Solution
 
 Here's the **best way** to tackle this on the CKA exam – no alternatives, just what works efficiently under time pressure.
+maxSurge = How many extra total pods can exist above your desired number (10).
 
----
+## maxUnavailable = How many old pods can be missing/dead at any given moment.
 
 ## 1. Create namespace
 
@@ -34,7 +35,7 @@ kubectl create namespace exercise-06
 ```bash
 kubectl create deployment webapp -n exercise-06 \
   --image=nginx:1.28 \
-  --replicas=3 
+  --replicas=3
 
  kubectl annotate deployment webapp  -n exercise-06 \
 kubernetes.io/change-cause="Initial nginx deployment"
