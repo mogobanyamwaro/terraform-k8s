@@ -37,9 +37,9 @@ Everything in AWS starts with **who** can do **what**.
 - Temporary credentials via `AssumeRole`
 - **Pattern:** GitHub OIDC → IAM role (no long-lived keys in CI)
 
-### Organizations + IAM Identity Center (Awareness → Important at scale)
+### Organizations + IAM Identity Center (Awareness → Important at scale)([YouTube](https://www.youtube.com/watch?v=bQ2EtLnN6KQ))
 
-- Multi-account structure, SCPs, centralized SSO
+- Multi-account structure, SCPs, centralized SSO ([YouTube](https://www.youtube.com/watch?v=FR36p7iiRkU)(https://www.youtube.com/watch?v=dCSKJ2XXENw))
 - **Floci:** No — graduation project on real AWS
 
 ### Key concepts to memorize
