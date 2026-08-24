@@ -105,6 +105,8 @@ Most platform incidents involve networking. Know these deeply.
 
 ## 3. Compute (Core)
 
+### Elastic beanStalk ([Youtube](https://www.youtube.com/watch?v=Ht1COADOsNI))
+
 ### EC2 + Auto Scaling ([YouTube](https://www.youtube.com/watch?v=fwfkSxb1T-s))
 
 - Instances, AMIs, launch templates, ASG
@@ -142,7 +144,7 @@ Most platform incidents involve networking. Know these deeply.
 - Buckets, versioning, lifecycle, encryption, policies, static website hosting
 - **DevOps:** Terraform remote state, artifacts, logs, static assets
 
-### EBS / EFS
+### EBS / EFS ([Youtube](https://www.youtube.com/watch?v=aAOC6oS445s))
 
 - Block vs shared file storage for EC2/EKS
 
@@ -181,7 +183,7 @@ Most platform incidents involve networking. Know these deeply.
 - Queues (standard/FIFO), fan-out, DLQ, visibility timeout
 - **SRE pattern:** decouple, absorb spikes, alert routing
 
-### EventBridge
+### EventBridge ([YouTube](https://www.youtube.com/watch?v=_yC_Jn9rttY))
 
 - Event bus, rules, schedules, cross-account routing
 
@@ -210,7 +212,7 @@ Most platform incidents involve networking. Know these deeply.
 - Multi-cloud IaC; remote state in S3 + DynamoDB lock
 - **Must know:** provider auth (OIDC), `aws` endpoints for Floci/local
 
-### Systems Manager (SSM)
+### Systems Manager (SSM) ([Youtube](https://www.youtube.com/watch?v=B2MecqC5nJA))
 
 - Parameter Store, Session Manager (no SSH keys), Run Command, Patch Manager
 
@@ -232,7 +234,7 @@ Most platform incidents involve networking. Know these deeply.
 
 You will wire pipelines constantly as a platform engineer.
 
-### CodePipeline + CodeBuild + CodeDeploy
+### CodePipeline + CodeBuild + CodeDeploy ([Youtube](https://www.youtube.com/watch?v=iGCJ-N7bPX0))
 
 - Native AWS delivery chain; artifact buckets in S3
 
@@ -259,7 +261,7 @@ Commit → Build → Test → Scan → Push ECR → Deploy (EKS/ECS/Lambda) → 
 
 You can't operate what you can't see.
 
-### CloudWatch
+### CloudWatch ([Youtube](https://www.youtube.com/watch?v=Yxl7e88cTAQ))
 
 - Metrics, logs, dashboards, alarms, composite alarms
 - **SRE:** SLI/SLO dashboards, error budget burn alerts
@@ -268,11 +270,11 @@ You can't operate what you can't see.
 
 - Log groups/streams; subscription filters to Lambda/Kinesis
 
-### X-Ray (Important)
+### X-Ray (Important) ([Youtube](https://www.youtube.com/watch?v=V1Fj8uEyp-E))
 
 - Distributed tracing for Lambda, API Gateway, ECS, EKS apps
 
-### CloudTrail
+### CloudTrail ([Youtube](https://www.youtube.com/watch?v=CXbdsp9ThvM))
 
 - API audit trail — who changed what in the account
 
@@ -286,7 +288,7 @@ You can't operate what you can't see.
 
 ---
 
-## 9. Security & Secrets (Core)
+## 9. Security & Secrets (Core) ([Youtube](https://www.youtube.com/watch?v=TS0UhSfzy_4))
 
 ### KMS
 
@@ -296,7 +298,7 @@ You can't operate what you can't see.
 
 - Secret rotation, versioning, reference from Lambda/EKS/ECS
 
-### AWS Config
+### AWS Config ([Youtube](https://www.youtube.com/watch?v=qHdFoYSrUvk))
 
 - Resource compliance rules; config snapshots
 
