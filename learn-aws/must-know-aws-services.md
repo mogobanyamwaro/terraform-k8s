@@ -63,28 +63,28 @@ Example: lambda.amazonaws.com → sts:AssumeRole → role/app-lambda → aws:Sou
 
 Most platform incidents involve networking. Know these deeply.
 
-### VPC
+### VPC([YouTube](https://www.youtube.com/watch?v=43tIX7901Gs))
 
 - CIDR, subnets (public/private), route tables, IGW, NAT gateway, NACLs
 - **Design rule:** private workloads, controlled egress, no public DBs
 
-### Security Groups + NACLs
+### Security Groups + NACLs([YouTube](https://www.youtube.com/watch?v=J4t2vBf9cOo))
 
 - SG: stateful, instance/ENI level (primary tool)
 - NACL: stateless, subnet level (coarse guard)
 
-### Elastic Load Balancing (ALB / NLB)
+### Elastic Load Balancing (ALB / NLB)([YouTube](https://www.youtube.com/watch?v=znQsN8KzF_o))
 
 - ALB: L7, path/host routing, target groups
 - NLB: L4, high performance
 - **EKS pattern:** ALB Ingress Controller / AWS Load Balancer Controller
 
-### Route 53
+### Route 53([YouTube](https://www.youtube.com/watch?v=JRZiQFVWpi8&t=353s))
 
 - Public/private hosted zones, health checks, routing policies
 - **Platform use:** service discovery, failover, weighted routing
 
-### VPC Endpoints (PrivateLink)
+### VPC Endpoints (PrivateLink)([YouTube](https://www.youtube.com/watch?v=vzTKr035ORQ))
 
 - Private access to S3, DynamoDB, ECR, etc. without internet egress
 
@@ -105,22 +105,22 @@ Most platform incidents involve networking. Know these deeply.
 
 ## 3. Compute (Core)
 
-### EC2 + Auto Scaling
+### EC2 + Auto Scaling ([YouTube](https://www.youtube.com/watch?v=fwfkSxb1T-s))
 
 - Instances, AMIs, launch templates, ASG
 - **SRE use:** baseline capacity, mixed instances, health checks
 
-### Lambda
+### Lambda ([YouTube](https://www.youtube.com/watch?v=XFGSuj83wdc))
 
-- Event-driven functions, layers, concurrency, DLQ
+- Event-driven functions, layers, concurrency, DLQ([YouTube](https://www.youtube.com/watch?v=-ResiAcM8pg))
 - **Platform use:** glue automation, webhooks, lightweight APIs
 
-### ECS / Fargate
+### ECS / Fargate ([Youtube](https://www.youtube.com/watch?v=86Ys0LnMSnY))
 
 - Container orchestration without managing control plane
 - **When:** simpler than EKS, AWS-native task scheduling
 
-### EKS
+### EKS ([YouTube](https://www.youtube.com/watch?v=aRXg75S5DWA&list=PLiMWaCMwGJXnKY6XmeifEpjIfkWRo9v2l))
 
 - Managed Kubernetes control plane; you manage node groups / add-ons
 - **Platform essentials:** IRSA, Cluster Autoscaler/Karpenter, EBS/EFS CSI, ALB controller, CoreDNS, metrics
