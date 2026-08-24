@@ -8,21 +8,21 @@ Pair this with hands-on projects in [`CURRICULUM.md`](CURRICULUM.md) and local p
 
 ## How to Use This Guide
 
-| Priority | Meaning |
-| -------- | ------- |
-| **Core** | Know cold for interviews and day-to-day work |
-| **Important** | Common in production; know when and why |
-| **Awareness** | Know it exists and what problem it solves |
+| Priority      | Meaning                                      |
+| ------------- | -------------------------------------------- |
+| **Core**      | Know cold for interviews and day-to-day work |
+| **Important** | Common in production; know when and why      |
+| **Awareness** | Know it exists and what problem it solves    |
 
-| Floci | Meaning |
-| ----- | ------- |
-| **Yes** | Practice fully on localhost:4566 |
-| **Partial** | Core workflows work; some prod edge cases need real AWS |
-| **No** | Org/global services — learn conceptually, practice on AWS free tier |
+| Floci       | Meaning                                                             |
+| ----------- | ------------------------------------------------------------------- |
+| **Yes**     | Practice fully on localhost:4566                                    |
+| **Partial** | Core workflows work; some prod edge cases need real AWS             |
+| **No**      | Org/global services — learn conceptually, practice on AWS free tier |
 
 ---
 
-## 1. Identity & Access (Core)
+## 1. Identity & Access (Core) ([YouTube](https://www.youtube.com/watch?v=hAk-7ImN6iM))
 
 Everything in AWS starts with **who** can do **what**.
 
@@ -32,7 +32,7 @@ Everything in AWS starts with **who** can do **what**.
 - Trust policies for cross-service and cross-account access
 - **DevOps use:** CI/CD roles, Lambda execution roles, EKS IRSA, break-glass admin separate from daily ops
 
-### STS (Security Token Service)
+### STS (Security Token Service) ([YouTube](https://www.youtube.com/watch?v=T2Nj4BYNMxM))
 
 - Temporary credentials via `AssumeRole`
 - **Pattern:** GitHub OIDC → IAM role (no long-lived keys in CI)
@@ -49,11 +49,11 @@ Principal → Action → Resource → Condition
 Example: lambda.amazonaws.com → sts:AssumeRole → role/app-lambda → aws:SourceAccount=123
 ```
 
-| Service | Floci |
-| ------- | ----- |
-| IAM | Yes |
-| STS | Yes |
-| Organizations / SSO | No |
+| Service             | Floci |
+| ------------------- | ----- |
+| IAM                 | Yes   |
+| STS                 | Yes   |
+| Organizations / SSO | No    |
 
 **Project:** [`projects/01-iam-foundation.md`](projects/01-iam-foundation.md)
 
@@ -92,11 +92,11 @@ Most platform incidents involve networking. Know these deeply.
 
 - Hybrid connectivity to on-prem
 
-| Service | Floci |
-| ------- | ----- |
-| VPC, EC2 networking, SG | Yes |
-| ELB (ALB/NLB) | Yes |
-| Route 53 | Yes |
+| Service                 | Floci   |
+| ----------------------- | ------- |
+| VPC, EC2 networking, SG | Yes     |
+| ELB (ALB/NLB)           | Yes     |
+| Route 53                | Yes     |
 | NAT / VPN edge behavior | Partial |
 
 **Project:** [`projects/02-vpc-three-tier.md`](projects/02-vpc-three-tier.md)
@@ -125,10 +125,10 @@ Most platform incidents involve networking. Know these deeply.
 - Managed Kubernetes control plane; you manage node groups / add-ons
 - **Platform essentials:** IRSA, Cluster Autoscaler/Karpenter, EBS/EFS CSI, ALB controller, CoreDNS, metrics
 
-| Service | Floci |
-| ------- | ----- |
-| EC2, Lambda, ECS | Yes |
-| EKS | Yes |
+| Service                 | Floci   |
+| ----------------------- | ------- |
+| EC2, Lambda, ECS        | Yes     |
+| EKS                     | Yes     |
 | Fargate billing nuances | Partial |
 
 **Projects:** [`03-serverless-api`](projects/03-serverless-api.md), [`06-eks-platform`](projects/06-eks-platform.md)
@@ -151,11 +151,11 @@ Most platform incidents involve networking. Know these deeply.
 - Private OCI registry; scan on push; lifecycle policies
 - **EKS pattern:** pull via node/instance role or IRSA
 
-| Service | Floci |
-| ------- | ----- |
-| S3 | Yes |
+| Service          | Floci   |
+| ---------------- | ------- |
+| S3               | Yes     |
 | EBS/EFS concepts | Partial |
-| ECR | Yes |
+| ECR              | Yes     |
 
 **Projects:** Phase 0 state bucket, [`09-static-delivery`](projects/09-static-delivery.md)
 
@@ -189,11 +189,11 @@ Most platform incidents involve networking. Know these deeply.
 
 - Streaming ingestion at scale
 
-| Service | Floci |
-| ------- | ----- |
-| RDS, DynamoDB, ElastiCache | Yes |
-| SQS, SNS, EventBridge | Yes |
-| Kinesis, MSK | Yes |
+| Service                    | Floci |
+| -------------------------- | ----- |
+| RDS, DynamoDB, ElastiCache | Yes   |
+| SQS, SNS, EventBridge      | Yes   |
+| Kinesis, MSK               | Yes   |
 
 **Projects:** [`03-serverless-api`](projects/03-serverless-api.md), [`08-event-driven`](projects/08-event-driven.md)
 
@@ -218,11 +218,11 @@ Most platform incidents involve networking. Know these deeply.
 
 - Unified CRUD for many AWS resources (used by some tools/operators)
 
-| Service | Floci |
-| ------- | ----- |
-| CloudFormation | Yes |
+| Service         | Floci                     |
+| --------------- | ------------------------- |
+| CloudFormation  | Yes                       |
 | Terraform apply | Yes (via local endpoints) |
-| SSM | Yes |
+| SSM             | Yes                       |
 
 **Projects:** [`07-terraform-pipeline`](projects/07-terraform-pipeline.md), [`learn-terraform`](../learn-terraform/README.md)
 
@@ -246,10 +246,10 @@ You will wire pipelines constantly as a platform engineer.
 Commit → Build → Test → Scan → Push ECR → Deploy (EKS/ECS/Lambda) → Smoke test
 ```
 
-| Service | Floci |
-| ------- | ----- |
-| CodePipeline, CodeBuild, CodeDeploy | Yes |
-| GitHub Actions | Runs on GitHub; targets Floci via env vars |
+| Service                             | Floci                                      |
+| ----------------------------------- | ------------------------------------------ |
+| CodePipeline, CodeBuild, CodeDeploy | Yes                                        |
+| GitHub Actions                      | Runs on GitHub; targets Floci via env vars |
 
 **Project:** [`07-terraform-pipeline`](projects/07-terraform-pipeline.md)
 
@@ -276,11 +276,11 @@ You can't operate what you can't see.
 
 - API audit trail — who changed what in the account
 
-| Service | Floci |
-| ------- | ----- |
-| CloudWatch metrics/logs/alarms | Yes |
-| CloudTrail | Yes |
-| X-Ray | Partial |
+| Service                        | Floci   |
+| ------------------------------ | ------- |
+| CloudWatch metrics/logs/alarms | Yes     |
+| CloudTrail                     | Yes     |
+| X-Ray                          | Partial |
 
 **Project:** [`04-observe-operate`](projects/04-observe-operate.md)
 
@@ -308,11 +308,11 @@ You can't operate what you can't see.
 
 - L7 firewall at ALB/CloudFront
 
-| Service | Floci |
-| ------- | ----- |
-| KMS, Secrets Manager | Yes |
-| Config, GuardDuty | Yes |
-| WAF | Yes |
+| Service              | Floci |
+| -------------------- | ----- |
+| KMS, Secrets Manager | Yes   |
+| Config, GuardDuty    | Yes   |
+| WAF                  | Yes   |
 
 **Project:** [`05-secrets-kms`](projects/05-secrets-kms.md)
 
@@ -332,9 +332,9 @@ You can't operate what you can't see.
 
 - Guardrails: deny public S3, restrict regions, require encryption
 
-| Service | Floci |
-| ------- | ----- |
-| Organizations, Budgets | No |
+| Service                     | Floci   |
+| --------------------------- | ------- |
+| Organizations, Budgets      | No      |
 | Tagging, Cost Explorer APIs | Partial |
 
 **Capstone:** [`10-platform-capstone`](projects/10-platform-capstone.md) (conceptual + real AWS graduation)
@@ -351,9 +351,9 @@ You can't operate what you can't see.
 
 - Common pattern for SPAs and asset delivery
 
-| Service | Floci |
-| ------- | ----- |
-| CloudFront | Yes |
+| Service         | Floci                                 |
+| --------------- | ------------------------------------- |
+| CloudFront      | Yes                                   |
 | Amplify Hosting | No (use existing project on real AWS) |
 
 **Projects:** [`09-static-delivery`](projects/09-static-delivery.md), [`../projects/aws-s3-cloudfront`](../projects/aws-s3-cloudfront/)
@@ -377,15 +377,15 @@ If you're preparing for a role or cert, prioritize in this order:
 
 ## Common Interview & On-Call Scenarios
 
-| Scenario | Services involved |
-| -------- | ----------------- |
-| Deploy app to EKS with private DB | EKS, ECR, RDS, SG, Secrets Manager, ALB |
-| Zero-trust internal API | Private subnets, ALB/internal NLB, IAM auth |
-| GitOps / platform delivery | EKS, ECR, CodePipeline or GitHub Actions, CloudWatch |
-| Multi-account landing zone | Organizations, SCPs, SSO, shared VPC/TGW |
-| Secure CI/CD without secrets | GitHub OIDC → IAM role → ECR/EKS deploy |
-| Central logging | CloudWatch Logs, CloudTrail, S3 archive, Athena (awareness) |
-| Incident: Lambda timeouts | CloudWatch Logs, X-Ray, DLQ, concurrency limits |
+| Scenario                          | Services involved                                           |
+| --------------------------------- | ----------------------------------------------------------- |
+| Deploy app to EKS with private DB | EKS, ECR, RDS, SG, Secrets Manager, ALB                     |
+| Zero-trust internal API           | Private subnets, ALB/internal NLB, IAM auth                 |
+| GitOps / platform delivery        | EKS, ECR, CodePipeline or GitHub Actions, CloudWatch        |
+| Multi-account landing zone        | Organizations, SCPs, SSO, shared VPC/TGW                    |
+| Secure CI/CD without secrets      | GitHub OIDC → IAM role → ECR/EKS deploy                     |
+| Central logging                   | CloudWatch Logs, CloudTrail, S3 archive, Athena (awareness) |
+| Incident: Lambda timeouts         | CloudWatch Logs, X-Ray, DLQ, concurrency limits             |
 
 ---
 
@@ -411,4 +411,4 @@ Governance (Organizations, tags, budgets)
 
 ---
 
-*See [`CURRICULUM.md`](CURRICULUM.md) for the project sequence that wires these services together.*
+_See [`CURRICULUM.md`](CURRICULUM.md) for the project sequence that wires these services together._
