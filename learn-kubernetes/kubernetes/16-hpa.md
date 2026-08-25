@@ -15,15 +15,19 @@ The CKA focuses on HPA, but understanding VPA helps with cluster resource effici
 1. Create a namespace called `exercise-16`
 2. Verify the metrics-server is running in the cluster
 3. Create a Deployment named `load-app` with:
-  - Image: `registry.k8s.io/hpa-example` (or `nginx:1.27` with resource requests)
-  - 1 replica
-  - CPU request: 50m
-  - CPU limit: 100m
+
+- Image: `registry.k8s.io/hpa-example` (or `nginx:1.27` with resource requests)
+- 1 replica
+- CPU request: 50m
+- CPU limit: 100m
+
 4. Expose it with a ClusterIP Service named `load-svc` on port 80
 5. Create an HPA targeting `load-app`:
-  - Min replicas: 1
-  - Max replicas: 5
-  - Target CPU utilization: 50%
+
+- Min replicas: 1
+- Max replicas: 5
+- Target CPU utilization: 50%
+
 6. Generate load against the service and observe the HPA scaling up
 7. Stop the load and observe the HPA scaling back down
 
@@ -196,7 +200,7 @@ EOF
 
 ```bash
 kubectl autoscale deployment load-app -n exercise-16 \
-  --cpu-percent=50% \
+  --cpu-percent=50 \
   --min=1 \
   --max=5
 ```
@@ -385,7 +389,6 @@ kubectl describe vpa load-app-vpa -n exercise-16
 
 ### VPA vs HPA Comparison Table
 
-
 | Aspect        | HPA                 | VPA                               |
 | ------------- | ------------------- | --------------------------------- |
 | Scales        | Number of replicas  | CPU/memory requests/limits        |
@@ -394,7 +397,6 @@ kubectl describe vpa load-app-vpa -n exercise-16
 | Pod restart   | No                  | Yes (when updateMode: Auto)       |
 | Use case      | Variable traffic    | Steady but misconfigured requests |
 | CKA focus     | Heavy               | Light (understand only)           |
-
 
 ---
 
@@ -453,7 +455,6 @@ spec:
 
 ## Exam Critical Notes
 
-
 | Component           | Purpose                     | Key Fields                                      |
 | ------------------- | --------------------------- | ----------------------------------------------- |
 | metrics-server      | Provides CPU/memory metrics | Required for HPA                                |
@@ -463,11 +464,9 @@ spec:
 | Max replicas        | Upper bound                 | `maxReplicas: 5`                                |
 | Scale stabilization | Prevents flapping           | `behavior.scaleDown.stabilizationWindowSeconds` |
 
-
 ---
 
 ## Common Exam Traps
-
 
 | Trap                       | Consequence           | Fix                          |
 | -------------------------- | --------------------- | ---------------------------- |
@@ -478,12 +477,11 @@ spec:
 | No load generator          | HPA never scales      | Generate CPU load            |
 | Checking too early         | HPA needs 30-60s      | Use `--watch`                |
 
-
 ---
 
 ## HPA Troubleshooting
 
-**HPA shows **** for metrics:**
+**HPA shows \*\*** for metrics:\*\*
 
 ```bash
 kubectl describe hpa load-app-hpa -n exercise-16
