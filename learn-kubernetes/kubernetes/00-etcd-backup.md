@@ -1,39 +1,241 @@
-# 1. Do the Backups
+# CKA: etcd Backup & Restore (Official Kubernetes procedure)
+
+Source: [Operating etcd clusters for Kubernetes](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/)
+
+> Run all commands on the **control-plane node**.
+> Verified on Multipass kubeadm v1.28.15 (`kubemaster` + `worker2`): backup → restore to a new data dir → cluster came back with nodes and workloads.
+
+The Kubernetes docs prefer `etcdutl` for snapshot status/restore (`etcdctl snapshot status` and `etcdctl snapshot restore` are deprecated since etcd v3.5). CKA and this lab still work with `etcdctl`. Use `etcdutl` if it is installed.
+
+---
+
+## 0. Get certs and endpoint from the etcd Pod
+
+Official backup section: _"`trusted-ca-file`, `cert-file` and `key-file` can be obtained from the description of the etcd Pod."_
 
 ```bash
-# For the back up
+kubectl -n kube-system describe pod etcd-$(hostname)
+```
+
+On this cluster:
+
+| Official placeholder | Value                                             |
+| -------------------- | ------------------------------------------------- |
+| endpoint             | `https://127.0.0.1:2379` (`--listen-client-urls`) |
+| trusted-ca-file      | `/etc/kubernetes/pki/etcd/ca.crt`                 |
+| cert-file            | `/etc/kubernetes/pki/etcd/server.crt`             |
+| key-file             | `/etc/kubernetes/pki/etcd/server.key`             |
+| etcd Pod name        | `etcd-kubemaster`                                 |
+
+---
+
+## 1. Backup
+
+From [Backing up an etcd cluster](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/#backing-up-an-etcd-cluster):
+
+```bash
 sudo ETCDCTL_API=3 etcdctl \
-  --dial-timeout=10s \
-  --command-timeout=180s \
   --endpoints=https://127.0.0.1:2379 \
   --cacert=/etc/kubernetes/pki/etcd/ca.crt \
   --cert=/etc/kubernetes/pki/etcd/server.crt \
-  --key=/etc/kubernetes/pki/etcd/server.key   \
-  snapshot save /opt/etcd-backup.db
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  snapshot save /opt/snapshot.db
+```
 
-# Verify the backup
-sudo ETCDCTL_API=3 etcdctl snapshot status /opt/etcd-backup.db
+Verify (`etcdctl` is deprecated; `etcdutl` if present):
 
-#   for the restore
-# 1) Restore snapshot into a NEW data dir (don't restore into existing dir)
-sudo systemctl stop kubelet
-sudo ETCDCTL_API=3 etcdctl snapshot restore /opt/etcd-backup.db \
-  --data-dir=/var/lib/etcd-restored
+```bash
+sudo ETCDCTL_API=3 etcdctl --write-out=table snapshot status /opt/snapshot.db
+# or: sudo etcdutl --write-out=table snapshot status /opt/snapshot.db
+```
 
-# 2) Backup current manifest first
-sudo cp /etc/kubernetes/manifests/etcd.yaml /etc/kubernetes/manifests/etcd.yaml.bak
+Expected:
 
-# 3) Edit manifest: change hostPath and --data-dir to restored path
+```
++----------+----------+------------+------------+
+|   HASH   | REVISION | TOTAL KEYS | TOTAL SIZE |
++----------+----------+------------+------------+
+| 6f2cead2 |  2731268 |       1330 |     5.4 MB |
++----------+----------+------------+------------+
+```
+
+---
+
+## 2. Restore
+
+From [Restoring an etcd cluster](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/#restoring-an-etcd-cluster).
+
+Official order:
+
+1. Stop **all** API server instances
+2. Restore etcd
+3. Restart all API server instances
+
+They also recommend restarting `kube-scheduler`, `kube-controller-manager`, and `kubelet` so those components do not keep stale data.
+
+### 2a. Stop the API server (kubeadm)
+
+On kubeadm the API server is a static Pod. Move its manifest out of `/etc/kubernetes/manifests/` so kubelet stops it:
+
+```bash
+sudo mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/
+```
+
+Wait until it is gone (can take a minute):
+
+```bash
+sudo crictl ps | grep kube-apiserver
+# empty = stopped
+# kubectl will also show: connection to the server ... was refused
+```
+
+### 2b. Restore into a **new** data directory
+
+Official command (docs recommend `etcdutl`; `etcdctl` still works):
+
+```bash
+sudo ETCDCTL_API=3 etcdctl --data-dir=/var/lib/etcd-from-backup \
+  snapshot restore /opt/snapshot.db
+```
+
+If `etcdutl` is available:
+
+```bash
+sudo etcdutl --data-dir=/var/lib/etcd-from-backup snapshot restore /opt/snapshot.db
+```
+
+If the data dir is the **same** as before, the docs say: delete it and stop etcd first. If it is a **new** directory (this path), do **not** change `--data-dir` in the container command. Change only the host mount.
+
+### 2c. Point etcd at the new directory
+
+Official text: change `/etc/kubernetes/manifests/etcd.yaml` `volumes.hostPath.path` for `name: etcd-data` to the new directory.
+
+```bash
 sudo vi /etc/kubernetes/manifests/etcd.yaml
-# inside the vi , change the following lines:
-# - hostPath: /var/lib/etcd --> to /var/lib/etcd-restored
-# -containers command: change from --data-dir=/var/lib/etcd --> to --data-dir=/var/lib/etcd-restored
+```
 
-# 4) Start kubelet
-sudo systemctl start kubelet
+Edit that `hostPath` so it is:
 
-# 5) Verify the restore
-sudo ETCDCTL_API=3 etcdctl snapshot status /var/lib/etcd-restored/member/snap/db
+```yaml
+- hostPath:
+    path: /var/lib/etcd-from-backup
+    type: DirectoryOrCreate
+  name: etcd-data
+```
+
+Leave `--data-dir=/var/lib/etcd` and `mountPath: /var/lib/etcd` unchanged.
+
+### 2d. Restart etcd and the API server
+
+Official options: delete the etcd Pod **or** restart kubelet, or both.
+
+```bash
+sudo mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
+sudo systemctl restart kubelet.service
+```
+
+If the API is already up and you only need etcd to pick up the new dir:
+
+```bash
+kubectl -n kube-system delete pod etcd-kubemaster
+```
+
+### 2e. Check
+
+```bash
+sudo crictl ps | grep -E "etcd|apiserver"
+kubectl get nodes
+kubectl get pods -A
+```
+
+---
+
+## 3. The three paths (why hostPath is the only edit)
+
+Official docs: change `volumes.hostPath.path` for `name: etcd-data`. They do **not** say to change `--data-dir` in the container command.
+
+| Setting                      | Value                       | What it is                                       |
+| ---------------------------- | --------------------------- | ------------------------------------------------ |
+| `etcdctl restore --data-dir` | `/var/lib/etcd-from-backup` | Folder on the **host** where restore writes data |
+| `hostPath.path`              | `/var/lib/etcd-from-backup` | Same host folder, mounted into the container     |
+| `mountPath`                  | `/var/lib/etcd`             | Where the mount appears **inside** the container |
+| `--data-dir` (in command)    | `/var/lib/etcd`             | Where etcd reads/writes **inside** the container |
+
+```
+HOST: /var/lib/etcd-from-backup  ──hostPath──►  CONTAINER: /var/lib/etcd
+                                                      ↑
+                                                 --data-dir
+                                                 mountPath
+```
+
+**Rule:** container `--data-dir` must match `mountPath` (always `/var/lib/etcd` on kubeadm).
+**Rule:** `hostPath` must match the restore `--data-dir` (the host folder).
+
+---
+
+## 4. Common mistakes
+
+| Mistake                                               | Symptom                                                                  |
+| ----------------------------------------------------- | ------------------------------------------------------------------------ |
+| Restore while API server is still running             | Docs forbid this; wait until `crictl ps \| grep kube-apiserver` is empty |
+| Changed container `--data-dir` to match the host path | etcd "Running" but empty cluster                                         |
+| Forgot to change `hostPath` for `name: etcd-data`     | etcd still uses the old directory                                        |
+| `hostPath` points at the wrong folder                 | Same — old or empty data                                                 |
+
+---
+
+## 5. CKA copy-paste template
+
+```bash
+# --- BACKUP ---
+sudo ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  snapshot save /opt/snapshot.db
+sudo ETCDCTL_API=3 etcdctl --write-out=table snapshot status /opt/snapshot.db
+
+# --- RESTORE ---
+sudo mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/
+# wait until: sudo crictl ps | grep kube-apiserver   is empty
+
+sudo ETCDCTL_API=3 etcdctl --data-dir=/var/lib/etcd-from-backup \
+  snapshot restore /opt/snapshot.db
+
+# edit /etc/kubernetes/manifests/etcd.yaml
+# volumes.hostPath.path for name: etcd-data  →  /var/lib/etcd-from-backup
+# do NOT change --data-dir or mountPath
+
+sudo mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
+sudo systemctl restart kubelet.service
+
+kubectl get nodes
+kubectl get pods -A
+```
+
+---
+
+## 6. Live test (2026-08-26, Multipass kubeadm v1.28.15)
+
+This exact official procedure:
+
+```
+Snapshot saved at /opt/snapshot.db
+HASH 6f2cead2  REVISION 2731268  TOTAL KEYS 1330  TOTAL SIZE 5.4 MB
+
+sudo mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/
+# waited until kube-apiserver gone, kubectl: connection refused
+
+sudo ETCDCTL_API=3 etcdctl --data-dir=/var/lib/etcd-from-backup snapshot restore /opt/snapshot.db
+# edited etcd.yaml hostPath → /var/lib/etcd-from-backup
+sudo mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
+sudo systemctl restart kubelet.service
+
+kubectl get pods
+NAME                          READY   STATUS    RESTARTS   AGE
+app                           1/1     Running   0          90m
+nginx-test-568599cf4d-qdrw8   1/1     Running   0          126m
+nginx-test-568599cf4d-w6vtq   1/1     Running   0          126m
 ```
 
 # 2.Complete Guide: Create Kubernetes User with Pod Permissions
@@ -632,13 +834,10 @@ kubectl get nodes -o wide
 
 if `kubectl top nodes` still fails after installation, and I can help diagnose the kubelet connection issue.
 
-
-
-
-
 ---
 
 # Complete CKA Exam Drill Package
+
 ## Zero to Exam-Ready (Before Paying for killer.sh)
 
 ---
@@ -761,6 +960,7 @@ k get networkpolicy
 ## 🔥 **Drill 2: The Troubleshooting Gauntlet (30 minutes)**
 
 ### Scenario A: Broken Image (5 minutes)
+
 ```bash
 # Create broken deployment
 k create deploy broken --image=nginx:notfound
@@ -777,6 +977,7 @@ k rollout undo deploy/broken          # Practice rollback
 ```
 
 ### Scenario B: Network Policy Blocking (5 minutes)
+
 ```bash
 # Create two pods
 k run backend --image=nginx --labels app=backend
@@ -821,6 +1022,7 @@ EOF
 ```
 
 ### Scenario C: PVC Not Bound (5 minutes)
+
 ```bash
 # Create PVC without PV
 k create pvc orphan-pvc --access-modes=ReadWriteOnce --resources=requests:storage=5Gi
@@ -847,6 +1049,7 @@ EOF
 ```
 
 ### Scenario D: CrashLoopBackOff (5 minutes)
+
 ```bash
 # Create crashing pod
 k run crash --image=busybox -- sleep 1
@@ -862,6 +1065,7 @@ k run fixed --image=busybox -- sleep 3600
 ```
 
 ### Scenario E: Service Not Exposed (5 minutes)
+
 ```bash
 # Create pod without service
 k run nopod --image=nginx
@@ -922,6 +1126,7 @@ ETCDCTL_API=3 etcdctl snapshot restore /tmp/etcd-backup.db \
 ## 🌐 **Drill 4: CoreDNS & Networking (15 minutes)**
 
 ### Scenario: DNS Resolution Problems
+
 ```bash
 # 1. Check CoreDNS status
 k get pods -n kube-system | grep coredns
@@ -945,6 +1150,7 @@ k logs -n kube-system kube-proxy-xxx
 ```
 
 ### Gateway/Ingress Drill
+
 ```bash
 # Create Ingress (traditional)
 k create ingress test-ingress --rule="example.com/*=frontend:80"
@@ -1270,17 +1476,20 @@ k get sa,role,rolebinding -A
 ## 🎯 **The 3-Day Pre-Exam Plan**
 
 ### **Day 1: Foundation**
+
 - Complete **Drill 1** (Speed Test) - 5 times
 - Complete **Drill 2** (Troubleshooting) - 3 times
 - Complete **Drill 8** (Quick-Fire) - until you answer in < 2 seconds each
 
 ### **Day 2: Advanced**
+
 - Complete **Drill 3** (ETCD) - 5 times
 - Complete **Drill 4** (Networking) - 3 times
 - Complete **Drill 5** (RBAC) - 3 times
 - Complete **Drill 7** (Marathon) - 2 times
 
 ### **Day 3: Final Polish**
+
 - Complete **Drill 7** - 1 time (under 45 minutes)
 - Complete **Drill 6** - 2 times
 - Review **Drill 8** commands
@@ -1312,5 +1521,5 @@ By the time you can:
 **You are 100% ready for the CKA exam.**
 
 > **This drill package + 5-10 hours of practice = Ready for exam**
-> 
+>
 > **Killer.sh is still recommended**, but this drill gives you the foundation to crush it. When you take killer.sh, it will feel like practice, not panic.
