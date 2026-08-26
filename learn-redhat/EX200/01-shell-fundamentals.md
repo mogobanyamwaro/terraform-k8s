@@ -156,7 +156,26 @@ ls -l /etc/hosts /tmp/lab01/hosts-plain /tmp/lab01/hosts-preserved
 stat -c '%a %U:%G %y' /etc/hosts /tmp/lab01/hosts-plain /tmp/lab01/hosts-preserved
 ```
 
-**You should see** `hosts-preserved` match the original's mode, owner, and timestamp. `hosts-plain` has a fresh timestamp and your umask-derived permissions.
+**You should see** `hosts-preserved` match the original's **mode and timestamp**. `hosts-plain` has a fresh timestamp and your umask-derived permissions.
+
+**Preserve** means: keep the **source file's metadata** on the copy, instead of giving the copy brand-new defaults.
+
+A normal `cp` copies **file contents only**. The new file gets:
+
+- **your** ownership (whoever ran `cp`)
+- **new** permissions from your umask
+- **now** as the timestamp
+
+`cp -p` copies contents **and** keeps these from the original:
+
+| What | Without `-p` | With `-p` (preserve) |
+| --- | --- | --- |
+| Contents | copied | copied |
+| Permissions (`644`, `755`, …) | new, from umask | same as source |
+| Owner / group | you | same as source (needs `sudo` for files you don't own) |
+| Timestamp | time of the copy | same as source |
+
+That is why `hosts-preserved` should match `/etc/hosts` on `stat` for mode and time, and `hosts-plain` should not. Owner only matches if you copy as root (`sudo cp -p`).
 
 | Flag | Meaning |
 | --- | --- |
